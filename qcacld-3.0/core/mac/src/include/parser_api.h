@@ -302,7 +302,7 @@ typedef struct sSirProbeRespBeacon {
 	uint8_t num_transmit_power_env;
 	tDot11fIEtransmit_power_env transmit_power_env[MAX_TPE_IES];
 	uint8_t ap_power_type;
-	tpSirMultiLink_IE mlo_ie;
+	tSirMultiLink_IE mlo_ie;
 } tSirProbeRespBeacon, *tpSirProbeRespBeacon;
 
 /* probe Request structure */
@@ -1132,9 +1132,19 @@ void populate_dot11f_assoc_rsp_rates(struct mac_context *mac,
 
 int find_ie_location(struct mac_context *mac, tpSirRSNie pRsnIe, uint8_t EID);
 
+/**
+ * wlan_get_cb_mode() - Get channel bonding mode from beacon
+ * @mac: Global mac context
+ * @ch_freq: channel frequency
+ * @ie_struct: beacon ie struct
+ * @pe_session: pointer to PE session
+ *
+ * Return: ePhyChanBondState
+ */
 ePhyChanBondState wlan_get_cb_mode(struct mac_context *mac,
 				   qdf_freq_t ch_freq,
-				   tDot11fBeaconIEs *ie_struct);
+				   tDot11fBeaconIEs *ie_struct,
+				   struct pe_session *pe_session);
 
 void lim_log_vht_cap(struct mac_context *mac, tDot11fIEVHTCaps *pDot11f);
 

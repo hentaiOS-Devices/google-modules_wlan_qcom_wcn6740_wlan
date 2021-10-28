@@ -266,7 +266,6 @@ tCsrScanResultInfo *csr_scan_result_get_next(struct mac_context *mac,
 
 /* some support functions */
 bool csr_is11h_supported(struct mac_context *mac);
-bool csr_is11e_supported(struct mac_context *mac);
 bool csr_is_wmm_supported(struct mac_context *mac);
 
 /* Return SUCCESS is the command is queued, failed */
@@ -405,7 +404,7 @@ QDF_STATUS csr_roam_set_psk_pmk(struct mac_context *mac,
  *
  * Return QDF_STATUS - usually it succeed unless session_id is not found
  */
-QDF_STATUS csr_set_pmk_cache_ft(struct mac_context *mac, uint32_t session_id,
+QDF_STATUS csr_set_pmk_cache_ft(struct mac_context *mac, uint8_t vdev_id,
 				struct wlan_crypto_pmksa *pmk_cache);
 #endif
 

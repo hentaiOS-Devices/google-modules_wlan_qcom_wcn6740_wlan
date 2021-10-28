@@ -81,6 +81,7 @@
 #include "wlan_roam_debug.h"
 #include "wlan_cm_roam_public_struct.h"
 #include "wlan_mlme_twt_api.h"
+#include <wlan_serialization_api.h>
 
 #define RSN_AUTH_KEY_MGMT_SAE           WLAN_RSN_SEL(WLAN_AKM_SAE)
 #define MAX_PWR_FCC_CHAN_12 8
@@ -109,7 +110,6 @@
 #define ROAMING_OFFLOAD_TIMER_START	1
 #define ROAMING_OFFLOAD_TIMER_STOP	2
 #define CSR_ROAMING_OFFLOAD_TIMEOUT_PERIOD    (5 * QDF_MC_TIMER_TO_SEC_UNIT)
-
 
 #ifdef WLAN_FEATURE_SAE
 /**
@@ -718,7 +718,7 @@ QDF_STATUS csr_update_channel_list(struct mac_context *mac)
 		return lock_status;
 
 	if (mac->mlme_cfg->reg.enable_pending_chan_list_req) {
-		scan_status = ucfg_scan_get_pdev_status(mac->pdev);
+		scan_status = wlan_get_pdev_status(mac->pdev);
 		if (scan_status == SCAN_IS_ACTIVE ||
 		    scan_status == SCAN_IS_ACTIVE_AND_PENDING) {
 			mac->scan.pending_channel_list_req = true;
@@ -938,7 +938,7 @@ QDF_STATUS csr_stop(struct mac_context *mac)
 		ucfg_scan_unregister_event_handler(mac->pdev,
 						   csr_scan_event_handler,
 						   mac);
-	ucfg_scan_psoc_set_disable(mac->psoc, REASON_SYSTEM_DOWN);
+	wlan_scan_psoc_set_disable(mac->psoc, REASON_SYSTEM_DOWN);
 
 	/*
 	 * purge all serialization commnad if there are any pending to make
@@ -1241,7 +1241,7 @@ static void init_config_param(struct mac_context *mac)
 	mac->roam.configParam.uCfgDot11Mode = eCSR_CFG_DOT11_MODE_AUTO;
 	mac->roam.configParam.HeartbeatThresh50 = 40;
 	mac->roam.configParam.Is11eSupportEnabled = true;
-	mac->roam.configParam.WMMSupportMode = eCsrRoamWmmAuto;
+	mac->roam.configParam.WMMSupportMode = WMM_USER_MODE_AUTO;
 	mac->roam.configParam.ProprietaryRatesEnabled = true;
 
 	mac->roam.configParam.nVhtChannelWidth =
@@ -1643,7 +1643,7 @@ QDF_STATUS csr_change_default_config_param(struct mac_context *mac,
 			pParam->is_force_1x1;
 		mac->roam.configParam.WMMSupportMode = pParam->WMMSupportMode;
 		mac->mlme_cfg->wmm_params.wme_enabled =
-			(pParam->WMMSupportMode == eCsrRoamWmmNoQos) ? 0 : 1;
+			(pParam->WMMSupportMode == WMM_USER_MODE_NO_QOS) ? 0 : 1;
 		mac->roam.configParam.Is11eSupportEnabled =
 			pParam->Is11eSupportEnabled;
 
@@ -2301,7 +2301,6 @@ QDF_STATUS csr_roam_prepare_bss_config_from_profile(struct mac_context *mac,
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	uint32_t bss_op_ch_freq = 0;
-	uint8_t qAPisEnabled = false;
 	enum reg_wifi_band band;
 
 	/* SSID */
@@ -2329,28 +2328,6 @@ QDF_STATUS csr_roam_prepare_bss_config_from_profile(struct mac_context *mac,
 						mac, vdev_id, pProfile,
 						bss_op_ch_freq,
 						&band);
-	/* QOS */
-	/* Is this correct to always set to this // *** */
-	if (pBssConfig->BssCap.ess == 1) {
-		/*For Softap case enable WMM */
-		if (CSR_IS_INFRA_AP(pProfile)
-		    && (eCsrRoamWmmNoQos !=
-			mac->roam.configParam.WMMSupportMode)) {
-			qAPisEnabled = true;
-		} else {
-			qAPisEnabled = false;
-		}
-	} else {
-		qAPisEnabled = true;
-	}
-	if ((eCsrRoamWmmNoQos != mac->roam.configParam.WMMSupportMode &&
-	     qAPisEnabled) ||
-	    ((eCSR_CFG_DOT11_MODE_11N == pBssConfig->uCfgDot11Mode &&
-	      qAPisEnabled))) {
-		pBssConfig->qosType = eCSR_MEDIUM_ACCESS_WMM_eDCF_DSCP;
-	} else {
-		pBssConfig->qosType = eCSR_MEDIUM_ACCESS_DCF;
-	}
 
 	/* short slot time */
 	if (WNI_CFG_PHY_MODE_11B != pBssConfig->uCfgDot11Mode) {
@@ -2360,48 +2337,6 @@ QDF_STATUS csr_roam_prepare_bss_config_from_profile(struct mac_context *mac,
 		mac->mlme_cfg->feature_flags.enable_short_slot_time_11g = 0;
 	}
 
-	return status;
-}
-
-static QDF_STATUS csr_set_qos_to_cfg(struct mac_context *mac, uint32_t sessionId,
-				     eCsrMediaAccessType qosType)
-{
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
-	uint32_t QoSEnabled;
-	uint32_t WmeEnabled;
-	/* set the CFG enable/disable variables based on the
-	 * qosType being configured.
-	 */
-	switch (qosType) {
-	case eCSR_MEDIUM_ACCESS_WMM_eDCF_802dot1p:
-		QoSEnabled = false;
-		WmeEnabled = true;
-		break;
-	case eCSR_MEDIUM_ACCESS_WMM_eDCF_DSCP:
-		QoSEnabled = false;
-		WmeEnabled = true;
-		break;
-	case eCSR_MEDIUM_ACCESS_WMM_eDCF_NoClassify:
-		QoSEnabled = false;
-		WmeEnabled = true;
-		break;
-	case eCSR_MEDIUM_ACCESS_11e_eDCF:
-		QoSEnabled = true;
-		WmeEnabled = false;
-		break;
-	case eCSR_MEDIUM_ACCESS_11e_HCF:
-		QoSEnabled = true;
-		WmeEnabled = false;
-		break;
-	default:
-	case eCSR_MEDIUM_ACCESS_DCF:
-		QoSEnabled = false;
-		WmeEnabled = false;
-		break;
-	}
-	/* save the WMM setting for later use */
-	mac->roam.roamSession[sessionId].fWMMConnection = (bool) WmeEnabled;
-	mac->roam.roamSession[sessionId].fQOSConnection = (bool) QoSEnabled;
 	return status;
 }
 
@@ -2537,8 +2472,6 @@ QDF_STATUS csr_roam_set_bss_config_cfg(struct mac_context *mac, uint32_t session
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	/* Qos */
-	csr_set_qos_to_cfg(mac, sessionId, pBssConfig->qosType);
 	/* CB */
 	if (CSR_IS_INFRA_AP(pProfile))
 		chan_freq = pProfile->op_freq;
@@ -3158,6 +3091,7 @@ QDF_STATUS csr_roam_copy_profile(struct mac_context *mac,
 		pDstProfile->extended_rates.numRates =
 			pSrcProfile->extended_rates.numRates;
 	}
+	pDstProfile->require_h2e = pSrcProfile->require_h2e;
 	pDstProfile->cac_duration_ms = pSrcProfile->cac_duration_ms;
 	pDstProfile->dfs_regdomain   = pSrcProfile->dfs_regdomain;
 	pDstProfile->chan_switch_hostapd_rate_enabled  =
@@ -3727,6 +3661,11 @@ void csr_roam_joined_state_msg_processor(struct mac_context *mac, void *msg_buf)
 		qdf_mem_copy(roam_info->peerMac.bytes,
 			     pUpperLayerAssocCnf->peerMacAddr,
 			     sizeof(tSirMacAddr));
+#ifdef WLAN_FEATURE_11BE_MLO
+		qdf_mem_copy(roam_info->peer_mld.bytes,
+			     pUpperLayerAssocCnf->peer_mld_addr,
+			     sizeof(tSirMacAddr));
+#endif
 		qdf_mem_copy(&roam_info->bssid,
 			     pUpperLayerAssocCnf->bssId,
 			     sizeof(struct qdf_mac_addr));
@@ -4256,6 +4195,10 @@ csr_send_assoc_ind_to_upper_layer_cnf_msg(struct mac_context *mac,
 	qdf_mem_copy(&cnf->bssId, &ind->bssId, sizeof(cnf->bssId));
 	qdf_mem_copy(&cnf->peerMacAddr, &ind->peerMacAddr,
 		     sizeof(cnf->peerMacAddr));
+#ifdef WLAN_FEATURE_11BE_MLO
+	qdf_mem_copy(&cnf->peer_mld_addr, &ind->peer_mld_addr,
+		     sizeof(cnf->peer_mld_addr));
+#endif
 	cnf->aid = ind->staId;
 	cnf->wmmEnabledSta = ind->wmmEnabledSta;
 	cnf->rsnIE = ind->rsnIE;
@@ -5418,6 +5361,7 @@ csr_roam_get_bss_start_parms(struct mac_context *mac,
 	uint32_t opr_ch_freq = 0;
 	tSirNwType nw_type;
 	uint32_t tmp_opr_ch_freq = 0;
+	uint8_t h2e;
 	tSirMacRateSet *opr_rates = &pParam->operationalRateSet;
 	tSirMacRateSet *ext_rates = &pParam->extendedRateSet;
 
@@ -5505,6 +5449,22 @@ csr_roam_get_bss_start_parms(struct mac_context *mac,
 			break;
 		}
 		pParam->operation_chan_freq = opr_ch_freq;
+	}
+
+	if (pProfile->require_h2e) {
+		h2e = WLAN_BASIC_RATE_MASK |
+			WLAN_BSS_MEMBERSHIP_SELECTOR_SAE_H2E;
+		if (ext_rates->numRates < SIR_MAC_MAX_NUMBER_OF_RATES) {
+			ext_rates->rate[ext_rates->numRates] = h2e;
+			ext_rates->numRates++;
+			sme_debug("H2E bss membership add to ext support rate");
+		} else if (opr_rates->numRates < SIR_MAC_MAX_NUMBER_OF_RATES) {
+			opr_rates->rate[opr_rates->numRates] = h2e;
+			opr_rates->numRates++;
+			sme_debug("H2E bss membership add to support rate");
+		} else {
+			sme_err("rates full, can not add H2E bss membership");
+		}
 	}
 
 	pParam->sirNwType = nw_type;
@@ -5709,18 +5669,18 @@ QDF_STATUS csr_roam_set_psk_pmk(struct mac_context *mac,
 	return QDF_STATUS_SUCCESS;
 }
 
-QDF_STATUS csr_set_pmk_cache_ft(struct mac_context *mac, uint32_t session_id,
+QDF_STATUS csr_set_pmk_cache_ft(struct mac_context *mac, uint8_t vdev_id,
 				struct wlan_crypto_pmksa *pmk_cache)
 {
 	struct wlan_objmgr_vdev *vdev;
 	int32_t akm;
 
-	if (!CSR_IS_SESSION_VALID(mac, session_id)) {
-		sme_err("session %d not found", session_id);
+	if (!CSR_IS_SESSION_VALID(mac, vdev_id)) {
+		sme_err("session %d not found", vdev_id);
 		return QDF_STATUS_E_INVAL;
 	}
 
-	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(mac->psoc, session_id,
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(mac->psoc, vdev_id,
 						    WLAN_LEGACY_SME_ID);
 	if (!vdev) {
 		sme_err("vdev is NULL");
@@ -5741,31 +5701,47 @@ QDF_STATUS csr_set_pmk_cache_ft(struct mac_context *mac, uint32_t session_id,
 	    QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FILS_SHA384) ||
 	    QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_IEEE8021X_SHA384)) {
 		sme_debug("Auth type: %x update the MDID in cache", akm);
-		cm_update_pmk_cache_ft(mac->psoc, session_id);
+		cm_update_pmk_cache_ft(mac->psoc, vdev_id);
 	} else {
 		struct cm_roam_values_copy src_cfg;
-		QDF_STATUS status = QDF_STATUS_E_FAILURE;
-		tCsrScanResultInfo *scan_res;
+		struct scan_filter *scan_filter;
+		qdf_list_t *list = NULL;
+		struct scan_cache_node *first_node = NULL;
+		struct rsn_mdie *mdie = NULL;
+		qdf_list_node_t *cur_node = NULL;
 
-		scan_res = qdf_mem_malloc(sizeof(tCsrScanResultInfo));
-		if (!scan_res)
+		scan_filter = qdf_mem_malloc(sizeof(*scan_filter));
+		if (!scan_filter)
 			return QDF_STATUS_E_NOMEM;
-
-		status = csr_scan_get_result_for_bssid(mac, &pmk_cache->bssid,
-						       scan_res);
-		if (QDF_IS_STATUS_SUCCESS(status) &&
-		    scan_res->BssDescriptor.mdiePresent) {
+		scan_filter->num_of_bssid = 1;
+		qdf_mem_copy(scan_filter->bssid_list[0].bytes,
+			     &pmk_cache->bssid, sizeof(struct qdf_mac_addr));
+		list = wlan_scan_get_result(mac->pdev, scan_filter);
+		qdf_mem_free(scan_filter);
+		if (!list || (list && !qdf_list_size(list))) {
+			sme_debug("Scan list is empty");
+			goto err;
+		}
+		qdf_list_peek_front(list, &cur_node);
+		first_node = qdf_container_of(cur_node,
+					      struct scan_cache_node,
+					      node);
+		if (first_node && first_node->entry)
+			mdie = (struct rsn_mdie *)
+					util_scan_entry_mdie(first_node->entry);
+		if (mdie) {
 			sme_debug("Update MDID in cache from scan_res");
 			src_cfg.bool_value = true;
 			src_cfg.uint_value =
-				(scan_res->BssDescriptor.mdie[0] |
-				 (scan_res->BssDescriptor.mdie[1] << 8));
-			wlan_cm_roam_cfg_set_value(mac->psoc, session_id,
+				(mdie->mobility_domain[0] |
+				 (mdie->mobility_domain[1] << 8));
+			wlan_cm_roam_cfg_set_value(mac->psoc, vdev_id,
 						   MOBILITY_DOMAIN, &src_cfg);
-			cm_update_pmk_cache_ft(mac->psoc, session_id);
+			cm_update_pmk_cache_ft(mac->psoc, vdev_id);
 		}
-		qdf_mem_free(scan_res);
-		scan_res = NULL;
+err:
+		if (list)
+			wlan_scan_purge_results(list);
 	}
 	return QDF_STATUS_SUCCESS;
 }
@@ -6017,10 +5993,6 @@ QDF_STATUS cm_csr_handle_join_req(struct wlan_objmgr_vdev *vdev,
 		sme_qos_csr_event_ind(mac_ctx, vdev_id,
 				      SME_QOS_CSR_JOIN_REQ, NULL);
 	}
-
-	csr_set_qos_to_cfg(mac_ctx, vdev_id,
-			   csr_get_qos_from_bss_desc(mac_ctx, bss_desc,
-						     ie_struct));
 
 	if ((wlan_reg_11d_enabled_on_host(mac_ctx->psoc)) &&
 	     !ie_struct->Country.present)
@@ -6369,12 +6341,17 @@ cm_update_rsn_ocv_cap(int32_t *rsn_cap,
 	uint32_t ie_len;
 	QDF_STATUS status;
 
+	/* no need to do anything if OCV is not set */
+	if (!(*rsn_cap & WLAN_CRYPTO_RSN_CAP_OCV_SUPPORTED))
+		return;
+
 	if (!rsp->connect_ies.bcn_probe_rsp.ptr ||
 	    !rsp->connect_ies.bcn_probe_rsp.len ||
 	    (rsp->connect_ies.bcn_probe_rsp.len <
 		(sizeof(struct wlan_frame_hdr) +
 		offsetof(struct wlan_bcn_frame, ie)))) {
-		sme_err("invalid beacon probe rsp");
+		sme_err("invalid beacon probe rsp len %d",
+			rsp->connect_ies.bcn_probe_rsp.len);
 		return;
 	}
 
@@ -6387,10 +6364,9 @@ cm_update_rsn_ocv_cap(int32_t *rsn_cap,
 
 	status = wlan_get_crypto_params_from_rsn_ie(&crypto_params, ie_ptr,
 						    ie_len);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		sme_err("get crypto prarams from RSN IE failed");
+	if (QDF_IS_STATUS_ERROR(status))
 		return;
-	}
+
 	if (!(crypto_params.rsn_caps & WLAN_CRYPTO_RSN_CAP_OCV_SUPPORTED))
 		*rsn_cap &= ~WLAN_CRYPTO_RSN_CAP_OCV_SUPPORTED;
 }

@@ -462,15 +462,22 @@ void cm_set_vdev_link_id(struct cnx_mgr *cm_ctx,
 static void cm_update_vdev_mlme_macaddr(struct cnx_mgr *cm_ctx,
 					struct cm_connect_req *req)
 {
+	if (wlan_vdev_mlme_get_opmode(cm_ctx->vdev) != QDF_STA_MODE)
+		return;
+
 	wlan_vdev_obj_lock(cm_ctx->vdev);
 	if (req->cur_candidate->entry->ie_list.multi_link) {
 		/* Use link address for ML connection */
 		wlan_vdev_mlme_set_macaddr(cm_ctx->vdev,
 					   cm_ctx->vdev->vdev_mlme.linkaddr);
+		wlan_vdev_mlme_feat_ext2_cap_set(cm_ctx->vdev,
+						 WLAN_VDEV_FEXT2_MLO);
+		mlme_debug("set link address for ML connection");
 	} else {
 		/* Use net_dev address for non-ML connection */
 		wlan_vdev_mlme_set_macaddr(cm_ctx->vdev,
 					   cm_ctx->vdev->vdev_mlme.mldaddr);
+		mlme_debug("set net_dev address for non-ML connection");
 	}
 	wlan_vdev_obj_unlock(cm_ctx->vdev);
 }
@@ -805,6 +812,8 @@ static inline void cm_update_advance_filter(struct wlan_objmgr_pdev *pdev,
 {
 	struct wlan_objmgr_psoc *psoc = wlan_pdev_get_psoc(pdev);
 
+	/* Select only ESS type */
+	filter->bss_type = WLAN_TYPE_BSS;
 	filter->enable_adaptive_11r =
 		wlan_mlme_adaptive_11r_enabled(psoc);
 	if (wlan_vdev_mlme_get_opmode(cm_ctx->vdev) != QDF_STA_MODE)
@@ -1146,6 +1155,7 @@ QDF_STATUS cm_if_mgr_validate_candidate(struct cnx_mgr *cm_ctx,
 	struct if_mgr_event_data event_data = {0};
 
 	event_data.validate_bss_info.chan_freq = scan_entry->channel.chan_freq;
+	event_data.validate_bss_info.beacon_interval = scan_entry->bcn_int;
 	qdf_copy_macaddr(&event_data.validate_bss_info.peer_addr,
 			 &scan_entry->bssid);
 
@@ -1296,6 +1306,7 @@ QDF_STATUS cm_connect_start(struct cnx_mgr *cm_ctx,
 	}
 
 	status = cm_connect_get_candidates(pdev, cm_ctx, cm_req);
+
 	/* In case of status pending connect will continue after scan */
 	if (status == QDF_STATUS_E_PENDING)
 		return QDF_STATUS_SUCCESS;
@@ -1729,6 +1740,12 @@ cm_resume_connect_after_peer_create(struct cnx_mgr *cm_ctx, wlan_cm_id *cm_id)
 	req.is_non_assoc_link = cm_req->connect_req.req.is_non_assoc_link;
 	cm_update_ml_partner_info(&cm_req->connect_req.req, &req);
 
+	if (util_scan_entry_is_hidden_ap(req.bss->entry) &&
+	    QDF_HAS_PARAM(neg_sec_info->key_mgmt, WLAN_CRYPTO_KEY_MGMT_OWE)) {
+		mlme_debug("OWE transition candidate has wildcard ssid");
+		req.owe_trans_ssid = cm_req->connect_req.req.ssid;
+	}
+
 	wlan_reg_get_cc_and_src(psoc, country_code);
 	mlme_nofl_info(CM_PREFIX_FMT "Connecting to %.*s " QDF_MAC_ADDR_FMT " rssi: %d freq: %d akm 0x%x cipher: uc 0x%x mc 0x%x, wps %d osen %d force RSN %d CC: %c%c",
 		       CM_PREFIX_REF(req.vdev_id, req.cm_id),
@@ -1810,6 +1827,19 @@ cm_update_scan_db_on_connect_success(struct cnx_mgr *cm_ctx,
 			    resp->freq, rssi, resp->cm_id);
 }
 
+QDF_STATUS cm_notify_connect_complete(struct cnx_mgr *cm_ctx,
+				      struct wlan_cm_connect_resp *resp)
+{
+	mlme_cm_connect_complete_ind(cm_ctx->vdev, resp);
+	mlo_sta_link_connect_notify(cm_ctx->vdev, resp);
+	mlme_cm_osif_connect_complete(cm_ctx->vdev, resp);
+	cm_if_mgr_inform_connect_complete(cm_ctx->vdev,
+					  resp->connect_status);
+	cm_inform_blm_connect_complete(cm_ctx->vdev, resp);
+
+	return QDF_STATUS_SUCCESS;
+}
+
 QDF_STATUS cm_connect_complete(struct cnx_mgr *cm_ctx,
 			       struct wlan_cm_connect_resp *resp)
 {
@@ -1838,14 +1868,8 @@ QDF_STATUS cm_connect_complete(struct cnx_mgr *cm_ctx,
 	if (resp->is_reassoc && QDF_IS_STATUS_ERROR(resp->connect_status))
 		send_ind = false;
 
-	if (send_ind) {
-		mlme_cm_connect_complete_ind(cm_ctx->vdev, resp);
-		mlo_sta_link_connect_notify(cm_ctx->vdev, resp);
-		mlme_cm_osif_connect_complete(cm_ctx->vdev, resp);
-		cm_if_mgr_inform_connect_complete(cm_ctx->vdev,
-						  resp->connect_status);
-		cm_inform_blm_connect_complete(cm_ctx->vdev, resp);
-	}
+	if (send_ind)
+		cm_notify_connect_complete(cm_ctx, resp);
 
 	/* Update scan entry in case connect is success or fails with bssid */
 	if (!qdf_is_macaddr_zero(&resp->bssid)) {

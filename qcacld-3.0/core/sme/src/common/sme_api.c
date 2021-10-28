@@ -268,7 +268,8 @@ static QDF_STATUS sme_process_hw_mode_trans_ind(struct mac_context *mac,
 	policy_mgr_hw_mode_transition_cb(param->old_hw_mode_index,
 		param->new_hw_mode_index,
 		param->num_vdev_mac_entries,
-		param->vdev_mac_map, mac->psoc);
+		param->vdev_mac_map, param->num_freq_map, param->mac_freq_map,
+		mac->psoc);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1918,7 +1919,7 @@ static QDF_STATUS sme_process_antenna_mode_resp(struct mac_context *mac,
  * to iterate through the list of all peers and check for any given @dialog_id
  * if the command @cmd is in progress.
  * Note: If @peer_mac is broadcast MAC address then @dialog_id shall always
- * be WLAN_ALL_SESSIONS_DIALOG_ID.
+ * be TWT_ALL_SESSIONS_DIALOG_ID.
  * For ex: If TWT teardown command is issued on a particular @dialog_id and
  * non-broadcast peer mac and FW response is not yet received then for that
  * particular @dialog_id and @peer_mac, TWT teardown is the active command,
@@ -1959,7 +1960,7 @@ sme_sap_twt_is_command_in_progress(struct wlan_objmgr_psoc *psoc,
  * If the input @peer_mac is a broadcast MAC address then there is nothing
  * to do, because the initialized structure is already in the expected format
  * Note: If @peer_mac is broadcast MAC address then @dialog_id shall always
- * be WLAN_ALL_SESSIONS_DIALOG_ID.
+ * be TWT_ALL_SESSIONS_DIALOG_ID.
  *
  * If the input @peer_mac is a non-broadcast MAC address then
  * mlme_add_twt_session() shall add the @dialog_id to the @peer_mac
@@ -1990,7 +1991,7 @@ sme_sap_add_twt_session(struct wlan_objmgr_psoc *psoc,
  * to iterate through the list of all peers and set the active command to @cmd
  * for the given @dialog_id
  * Note: If @peer_mac is broadcast MAC address then @dialog_id shall always
- * be WLAN_ALL_SESSIONS_DIALOG_ID.
+ * be TWT_ALL_SESSIONS_DIALOG_ID.
  * For ex: If TWT teardown command is issued on broadcast @peer_mac, then
  * it is same as issuing TWT teardown for all the peers (all TWT sessions).
  * Invoking mlme_sap_set_twt_all_peers_cmd_in_progress() shall iterate through
@@ -2032,7 +2033,7 @@ sme_sap_set_twt_command_in_progress(struct wlan_objmgr_psoc *psoc,
  * to iterate through the list of all peers and initialize the TWT session
  * context
  * Note: If @peer_mac is broadcast MAC address then @dialog_id shall always
- * be WLAN_ALL_SESSIONS_DIALOG_ID.
+ * be TWT_ALL_SESSIONS_DIALOG_ID.
  * For ex: If TWT teardown command is issued on broadcast @peer_mac, then
  * it is same as issuing TWT teardown for all the peers (all TWT sessions).
  * Then active command for all the peers is set to @WLAN_TWT_TERMINATE.
@@ -2225,7 +2226,7 @@ sme_process_sta_twt_del_dialog_event(
 		struct wmi_twt_del_dialog_complete_event_param *param)
 {
 	twt_del_dialog_cb callback;
-	bool is_evt_allowed;
+	bool is_evt_allowed, usr_cfg_ps_enable;
 	enum wlan_twt_commands active_cmd = WLAN_TWT_NONE;
 
 	is_evt_allowed = mlme_twt_is_command_in_progress(
@@ -2234,7 +2235,7 @@ sme_process_sta_twt_del_dialog_event(
 					WLAN_TWT_TERMINATE, &active_cmd);
 
 	if (!is_evt_allowed &&
-	    param->dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID &&
+	    param->dialog_id != TWT_ALL_SESSIONS_DIALOG_ID &&
 	    param->status != WMI_HOST_DEL_TWT_STATUS_ROAMING &&
 	    param->status != WMI_HOST_DEL_TWT_STATUS_PEER_INIT_TEARDOWN &&
 	    param->status != WMI_HOST_DEL_TWT_STATUS_CONCURRENCY) {
@@ -2243,6 +2244,11 @@ sme_process_sta_twt_del_dialog_event(
 
 		return;
 	}
+
+	usr_cfg_ps_enable = mlme_get_user_ps(mac->psoc, param->vdev_id);
+	if (!usr_cfg_ps_enable &&
+	    param->status == WMI_HOST_DEL_TWT_STATUS_OK)
+		param->status = WMI_HOST_DEL_TWT_STATUS_PS_DISABLE_TEARDOWN;
 
 	callback = mac->sme.twt_del_dialog_cb;
 	if (callback)
@@ -2419,7 +2425,7 @@ sme_process_twt_nudge_dialog_event(struct mac_context *mac,
 					param->peer_macaddr, param->dialog_id,
 					WLAN_TWT_NUDGE, &active_cmd);
 		if (!is_evt_allowed &&
-		    param->dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID) {
+		    param->dialog_id != TWT_ALL_SESSIONS_DIALOG_ID) {
 			sme_debug("Nudge event dropped active_cmd:%d",
 				  active_cmd);
 			goto fail;
@@ -3463,7 +3469,7 @@ QDF_STATUS sme_roam_set_psk_pmk(mac_handle_t mac_handle,
 	return status;
 }
 
-QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t session_id,
+QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t vdev_id,
 				struct wlan_crypto_pmksa *pmk_cache)
 {
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
@@ -3471,7 +3477,7 @@ QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t session_id,
 
 	status = sme_acquire_global_lock(&mac->sme);
 	if (QDF_IS_STATUS_SUCCESS(status)) {
-		status = csr_set_pmk_cache_ft(mac, session_id, pmk_cache);
+		status = csr_set_pmk_cache_ft(mac, vdev_id, pmk_cache);
 		sme_release_global_lock(&mac->sme);
 	}
 	return status;
@@ -4575,6 +4581,64 @@ release_lock:
 release_ref:
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_LEGACY_SME_ID);
 	return status;
+}
+
+#ifdef WLAN_FEATURE_11AX
+static void sme_update_bfer_he_cap(struct wma_tgt_cfg *cfg)
+{
+	cfg->he_cap_5g.su_beamformer = 0;
+}
+#else
+static void sme_update_bfer_he_cap(struct wma_tgt_cfg *cfg)
+{
+}
+#endif
+
+#ifdef WLAN_FEATURE_11BE
+static void sme_update_bfer_eht_cap(struct wma_tgt_cfg *cfg)
+{
+	cfg->eht_cap_5g.su_beamformer = 0;
+}
+#else
+static void sme_update_bfer_eht_cap(struct wma_tgt_cfg *cfg)
+{
+}
+#endif
+
+void sme_update_bfer_caps_as_per_nss_chains(mac_handle_t mac_handle,
+					    struct wma_tgt_cfg *cfg)
+{
+	uint8_t max_supported_tx_chains = MAX_VDEV_CHAINS;
+	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
+	struct wlan_mlme_nss_chains *nss_chains_ini_cfg =
+					&mac_ctx->mlme_cfg->nss_chains_ini_cfg;
+	uint8_t ini_tx_chains;
+
+	ini_tx_chains = GET_VDEV_NSS_CHAIN(
+			nss_chains_ini_cfg->num_tx_chains[NSS_CHAINS_BAND_5GHZ],
+			SAP_NSS_CHAINS_SHIFT);
+
+	max_supported_tx_chains =
+			mac_ctx->fw_chain_cfg.max_tx_chains_5g;
+
+	max_supported_tx_chains = QDF_MIN(ini_tx_chains,
+					  max_supported_tx_chains);
+	if (!max_supported_tx_chains)
+		return;
+
+	if (max_supported_tx_chains == 1) {
+		sme_debug("ini support %d and firmware support %d",
+			  ini_tx_chains,
+			  mac_ctx->fw_chain_cfg.max_tx_chains_5g);
+		if (mac_ctx->fw_chain_cfg.max_tx_chains_5g == 1) {
+			cfg->vht_cap.vht_su_bformer = 0;
+			sme_update_bfer_he_cap(cfg);
+			sme_update_bfer_eht_cap(cfg);
+		}
+		mac_ctx->mlme_cfg->vht_caps.vht_cap_info.su_bformer = 0;
+		mac_ctx->mlme_cfg->vht_caps.vht_cap_info.num_soundingdim = 0;
+		mac_ctx->mlme_cfg->vht_caps.vht_cap_info.mu_bformer = 0;
+	}
 }
 
 QDF_STATUS sme_vdev_post_vdev_create_setup(mac_handle_t mac_handle,
@@ -6202,8 +6266,7 @@ QDF_STATUS sme_set_roam_scan_control(mac_handle_t mac_handle, uint8_t sessionId,
 	sme_debug("LFR runtime successfully set roam scan control to %d - old value is %d",
 		  roamScanControl,
 		  mac->mlme_cfg->lfr.rso_user_config.roam_scan_control);
-	if (!roamScanControl &&
-	    mac->mlme_cfg->lfr.rso_user_config.roam_scan_control) {
+	if (!roamScanControl) {
 		/**
 		 * Clear the specific channel info cache when roamScanControl
 		 * is set to 0. If any preffered channel list is configured,
@@ -7027,35 +7090,6 @@ static bool sme_validate_freq_list(mac_handle_t mac_handle,
 	return true;
 }
 
-/**
- * sme_change_roam_scan_channel_list() - to change scan channel list
- * @mac_handle: Opaque handle to the global MAC context
- * @sessionId: sme session id
- * @channel_freq_list: Output channel list
- * @numChannels: Output number of channels
- *
- * This routine is called to Change roam scan channel list.
- * This is a synchronous call
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS sme_change_roam_scan_channel_list(mac_handle_t mac_handle,
-					     uint8_t sessionId,
-					     uint32_t *channel_freq_list,
-					     uint8_t numChannels)
-{
-	struct mac_context *mac = MAC_CONTEXT(mac_handle);
-	struct cm_roam_values_copy src_config;
-
-	src_config.chan_info.freq_list = channel_freq_list;
-	src_config.chan_info.num_chan = numChannels;
-
-	mac->mlme_cfg->lfr.rso_user_config.roam_scan_control = true;
-	return wlan_cm_roam_cfg_set_value(mac->psoc, sessionId,
-					  ROAM_SPECIFIC_CHAN,
-					  &src_config);
-}
-
 QDF_STATUS
 sme_update_roam_scan_freq_list(mac_handle_t mac_handle, uint8_t vdev_id,
 			       uint32_t *freq_list, uint8_t num_chan,
@@ -7072,11 +7106,11 @@ sme_update_roam_scan_freq_list(mac_handle_t mac_handle, uint8_t vdev_id,
 	src_config.chan_info.freq_list = freq_list;
 	src_config.chan_info.num_chan = num_chan;
 	if (freq_list_type == QCA_PREFERRED_SCAN_FREQ_LIST) {
+		sme_set_roam_scan_control(mac_handle, vdev_id, false);
 		return wlan_cm_roam_cfg_set_value(mac->psoc, vdev_id,
 						  ROAM_PREFERRED_CHAN,
 						  &src_config);
 	} else {
-		mac->mlme_cfg->lfr.rso_user_config.roam_scan_control = true;
 		return wlan_cm_roam_cfg_set_value(mac->psoc, vdev_id,
 						  ROAM_SPECIFIC_CHAN,
 						  &src_config);
@@ -7665,6 +7699,38 @@ QDF_STATUS sme_set_ht2040_mode(mac_handle_t mac_handle, uint8_t sessionId,
 		sme_release_global_lock(&mac->sme);
 	}
 	return status;
+}
+
+QDF_STATUS sme_get_ht2040_mode(mac_handle_t mac_handle, uint8_t vdev_id,
+			       enum eSirMacHTChannelType *channel_type)
+{
+	struct mac_context *mac = MAC_CONTEXT(mac_handle);
+	struct csr_roam_session *session;
+
+	if (!CSR_IS_SESSION_VALID(mac, vdev_id)) {
+		sme_err("Session not valid for session id %d", vdev_id);
+		return QDF_STATUS_E_INVAL;
+	}
+	session = CSR_GET_SESSION(mac, vdev_id);
+	sme_debug("Get HT operation beacon IE, channel_type=%d cur cbmode %d",
+		  *channel_type, session->bssParams.cbMode);
+
+	switch (session->bssParams.cbMode) {
+	case PHY_SINGLE_CHANNEL_CENTERED:
+		*channel_type = eHT_CHAN_HT20;
+		break;
+	case PHY_DOUBLE_CHANNEL_HIGH_PRIMARY:
+		*channel_type = eHT_CHAN_HT40MINUS;
+		break;
+	case PHY_DOUBLE_CHANNEL_LOW_PRIMARY:
+		*channel_type = eHT_CHAN_HT40PLUS;
+		break;
+	default:
+		sme_err("Error!!! Invalid HT20/40 mode !");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return QDF_STATUS_SUCCESS;
 }
 
 #endif
@@ -10894,6 +10960,56 @@ void sme_set_he_mu_edca_def_cfg(mac_handle_t mac_handle)
 	}
 }
 
+int sme_update_he_capabilities(mac_handle_t mac_handle, uint8_t session_id,
+			       uint8_t cfg_val, uint8_t cfg_id)
+{
+	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
+	struct csr_roam_session *session;
+	tDot11fIEhe_cap *cfg_he_cap;
+	tDot11fIEhe_cap *he_cap_orig;
+
+	session = CSR_GET_SESSION(mac_ctx, session_id);
+
+	if (!session) {
+		sme_err("No session for id %d", session_id);
+		return -EINVAL;
+	}
+	cfg_he_cap = &mac_ctx->mlme_cfg->he_caps.dot11_he_cap;
+	he_cap_orig = &mac_ctx->mlme_cfg->he_caps.he_cap_orig;
+
+	switch (cfg_id) {
+	case QCA_WLAN_VENDOR_ATTR_WIFI_TEST_CONFIG_BCAST_TWT_SUPPORT:
+		if (cfg_val) {
+			mac_ctx->mlme_cfg->twt_cfg.disable_btwt_usr_cfg = false;
+			cfg_he_cap->broadcast_twt = he_cap_orig->broadcast_twt;
+		} else {
+			cfg_he_cap->broadcast_twt = 0;
+			mac_ctx->mlme_cfg->twt_cfg.disable_btwt_usr_cfg = true;
+		}
+		break;
+	case QCA_WLAN_VENDOR_ATTR_WIFI_TEST_CONFIG_RX_CTRL_FRAME_TO_MBSS:
+		if (cfg_val)
+			cfg_he_cap->rx_ctrl_frame = he_cap_orig->rx_ctrl_frame;
+		else
+			cfg_he_cap->rx_ctrl_frame = 0;
+		break;
+	case QCA_WLAN_VENDOR_ATTR_WIFI_TEST_CONFIG_PUNCTURED_PREAMBLE_RX:
+		if (cfg_val)
+			cfg_he_cap->rx_pream_puncturing =
+				he_cap_orig->rx_pream_puncturing;
+		else
+			cfg_he_cap->rx_pream_puncturing = 0;
+		break;
+	default:
+		sme_debug("default: Unhandled cfg %d", cfg_id);
+		return -EINVAL;
+	}
+
+	sme_debug("HE cap: cfg id %d, cfg val %d", cfg_id, cfg_val);
+	csr_update_session_he_cap(mac_ctx, session);
+	return 0;
+}
+
 int sme_update_he_tx_bfee_supp(mac_handle_t mac_handle, uint8_t session_id,
 			       uint8_t cfg_val)
 {
@@ -13456,12 +13572,19 @@ QDF_STATUS sme_add_dialog_cmd(mac_handle_t mac_handle,
 	struct mac_context *mac = MAC_CONTEXT(mac_handle);
 	struct scheduler_msg twt_msg = {0};
 	bool is_twt_cmd_in_progress, is_twt_notify_in_progress;
+	bool usr_cfg_ps_enable;
 	QDF_STATUS status;
 	void *wma_handle;
 	struct wmi_twt_add_dialog_param *cmd_params;
 	enum wlan_twt_commands active_cmd = WLAN_TWT_NONE;
 
 	SME_ENTER();
+
+	usr_cfg_ps_enable = mlme_get_user_ps(mac->psoc, twt_params->vdev_id);
+	if (!usr_cfg_ps_enable) {
+		sme_debug("Power save mode disable");
+		return QDF_STATUS_E_INVAL;
+	}
 
 	is_twt_notify_in_progress = mlme_is_twt_notify_in_progress(
 			mac->psoc, twt_params->vdev_id);
@@ -14677,6 +14800,7 @@ void sme_set_he_testbed_def(mac_handle_t mac_handle, uint8_t vdev_id)
 	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
 	struct csr_roam_session *session;
 	QDF_STATUS status;
+	uint32_t prevent_pm[] = {29, 1};
 
 	session = CSR_GET_SESSION(mac_ctx, vdev_id);
 
@@ -14687,6 +14811,9 @@ void sme_set_he_testbed_def(mac_handle_t mac_handle, uint8_t vdev_id)
 	sme_debug("set HE testbed defaults");
 	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.amsdu_in_ampdu = 0;
 	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.twt_request = 0;
+	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.broadcast_twt = 0;
+	mac_ctx->mlme_cfg->twt_cfg.disable_btwt_usr_cfg = true;
+	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.rx_ctrl_frame = 0;
 	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.omi_a_ctrl = 0;
 	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.he_ppdu_20_in_160_80p80Mhz = 0;
 	mac_ctx->mlme_cfg->he_caps.dot11_he_cap.he_ppdu_20_in_40Mhz_2G = 0;
@@ -14738,6 +14865,10 @@ void sme_set_he_testbed_def(mac_handle_t mac_handle, uint8_t vdev_id)
 		sme_err("Failed not set enable bcast probe resp info, %d",
 			status);
 
+	status = sme_send_unit_test_cmd(vdev_id, 77, 2, prevent_pm);
+
+	if (QDF_STATUS_SUCCESS != status)
+		sme_err("prevent pm cmd send failed");
 	status = wma_cli_set_command(vdev_id,
 				     WMI_VDEV_PARAM_ENABLE_BCAST_PROBE_RESPONSE,
 				     0, VDEV_CMD);
@@ -14754,6 +14885,7 @@ void sme_reset_he_caps(mac_handle_t mac_handle, uint8_t vdev_id)
 	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
 	struct csr_roam_session *session;
 	QDF_STATUS status;
+	uint32_t prevent_pm[] = {29, 0};
 
 	session = CSR_GET_SESSION(mac_ctx, vdev_id);
 
@@ -14767,6 +14899,12 @@ void sme_reset_he_caps(mac_handle_t mac_handle, uint8_t vdev_id)
 	csr_update_session_he_cap(mac_ctx, session);
 
 	wlan_cm_set_check_6ghz_security(mac_ctx->psoc, true);
+	status = sme_send_unit_test_cmd(vdev_id, 77, 2, prevent_pm);
+
+	if (QDF_STATUS_SUCCESS != status)
+		sme_err("prevent PM reset cmd send failed");
+
+	mac_ctx->mlme_cfg->twt_cfg.disable_btwt_usr_cfg = false;
 	status = ucfg_mlme_set_enable_bcast_probe_rsp(mac_ctx->psoc, true);
 	if (QDF_IS_STATUS_ERROR(status))
 		sme_err("Failed not set enable bcast probe resp info, %d",

@@ -87,6 +87,7 @@
 #include "wlan_hdd_object_manager.h"
 #include <linux/igmp.h>
 #include "qdf_types.h"
+#include <linux/cpuidle.h>
 /* Preprocessor definitions and constants */
 #ifdef QCA_WIFI_EMULATION
 #define HDD_SSR_BRING_UP_TIME 3000000
@@ -281,7 +282,7 @@ static void hdd_enable_igmp_offload(struct hdd_adapter *adapter)
 	}
 	status = hdd_send_igmp_offload_params(adapter, true);
 	if (status != QDF_STATUS_SUCCESS)
-		hdd_debug("Failed to enable gtk offload");
+		hdd_debug("Failed to enable igmp offload");
 	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_POWER_ID);
 }
 
@@ -600,7 +601,7 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 	/* cache ns request */
 	status = ucfg_pmo_cache_ns_offload_req(ns_req);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		hdd_err("Failed to cache ns request; status:%d", status);
+		hdd_debug("Failed to cache ns request; status:%d", status);
 		goto free_req;
 	}
 
@@ -612,7 +613,7 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 	/* enable ns request */
 	status = ucfg_pmo_enable_ns_offload_in_fwr(vdev, trigger);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		hdd_err("Failed to enable ns offload; status:%d", status);
+		hdd_debug("Failed to enable ns offload; status:%d", status);
 		goto put_vdev;
 	}
 
@@ -678,16 +679,16 @@ out:
  */
 static void hdd_send_ps_config_to_fw(struct hdd_adapter *adapter)
 {
-	struct mac_context *mac_ctx;
 	struct hdd_context *hdd_ctx;
+	bool usr_ps_cfg;
 
 	if (hdd_validate_adapter(adapter))
 		return;
 
 	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
-	mac_ctx  = MAC_CONTEXT(hdd_ctx->mac_handle);
 
-	if (mac_ctx->usr_cfg_ps_enable)
+	usr_ps_cfg = ucfg_mlme_get_user_ps(hdd_ctx->psoc, adapter->vdev_id);
+	if (usr_ps_cfg)
 		sme_ps_enable_disable(hdd_ctx->mac_handle, adapter->vdev_id,
 				      SME_PS_ENABLE);
 	else
@@ -982,16 +983,7 @@ static int hdd_populate_ipv4_addr(struct hdd_adapter *adapter,
 	return 0;
 }
 
-/**
- * hdd_set_grat_arp_keepalive() - Enable grat APR keepalive
- * @adapter: the HDD adapter to configure
- *
- * This configures gratuitous APR keepalive based on the adapter's current
- * connection information, specifically IPv4 address and BSSID
- *
- * return: zero for success, non-zero for failure
- */
-static int hdd_set_grat_arp_keepalive(struct hdd_adapter *adapter)
+int hdd_set_grat_arp_keepalive(struct hdd_adapter *adapter)
 {
 	QDF_STATUS status;
 	int exit_code;
@@ -1177,12 +1169,27 @@ int wlan_hdd_ipv4_changed(struct notifier_block *nb,
 }
 
 #ifdef FEATURE_RUNTIME_PM
+/* For CPU, the enter & exit latency of the deepest LPM mode(CXPC)
+ * is about ~10ms. so long as required QoS latency is longer than 10ms,
+ * CPU can enter CXPC mode.
+ * The vote value is in microseconds.
+ */
+#define HDD_CPU_CXPC_THRESHOLD (10000)
+static bool wlan_hdd_is_cpu_cxpc_allowed(unsigned long vote)
+{
+	if (vote >= HDD_CPU_CXPC_THRESHOLD)
+		return true;
+	else
+		return false;
+}
+
 int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
 			   void *context)
 {
 	struct hdd_context *hdd_ctx = container_of(nb, struct hdd_context,
 						   pm_qos_notifier);
 	void *hif_ctx;
+	bool is_any_sta_connected = false;
 
 	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
 		hdd_debug_rl("Driver Module closed; skipping pm qos notify");
@@ -1193,16 +1200,20 @@ int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
 	if (!hif_ctx)
 		return -EINVAL;
 
-	hdd_debug("PM QOS update: runtime_pm_prevented %d Current value: %ld",
-		  hdd_ctx->runtime_pm_prevented, curr_val);
+	is_any_sta_connected = hdd_is_any_sta_connected(hdd_ctx);
+
+	hdd_debug("PM QOS update: runtime_pm_prevented %d Current value: %ld, is_any_sta_connected %d",
+		  hdd_ctx->runtime_pm_prevented, curr_val,
+		  is_any_sta_connected);
 	qdf_spin_lock_irqsave(&hdd_ctx->pm_qos_lock);
 
 	if (!hdd_ctx->runtime_pm_prevented &&
-	    curr_val != wlan_hdd_get_pm_qos_cpu_latency()) {
+	    is_any_sta_connected &&
+	    !wlan_hdd_is_cpu_cxpc_allowed(curr_val)) {
 		hif_pm_runtime_get_noresume(hif_ctx, RTPM_ID_QOS_NOTIFY);
 		hdd_ctx->runtime_pm_prevented = true;
 	} else if (hdd_ctx->runtime_pm_prevented &&
-		   curr_val == wlan_hdd_get_pm_qos_cpu_latency()) {
+		   wlan_hdd_is_cpu_cxpc_allowed(curr_val)) {
 		hif_pm_runtime_put(hif_ctx, RTPM_ID_QOS_NOTIFY);
 		hdd_ctx->runtime_pm_prevented = false;
 	}
@@ -1211,6 +1222,33 @@ int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
 
 	return NOTIFY_DONE;
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+bool wlan_hdd_is_cpu_pm_qos_in_progress(struct hdd_context *hdd_ctx)
+{
+	long long curr_val_ns;
+	long long curr_val_us;
+	int max_cpu_num;
+
+	if (!hdd_is_any_sta_connected(hdd_ctx)) {
+		hdd_debug("No active wifi connections. Ignore PM QOS vote");
+		return false;
+	}
+
+	max_cpu_num  = nr_cpu_ids - 1;
+
+	/* Get PM QoS vote from last cpu, as no device votes on that cpu
+	 * so by default we get global PM QoS vote from last cpu.
+	 */
+	curr_val_ns = cpuidle_governor_latency_req(max_cpu_num);
+	curr_val_us = curr_val_ns / NSEC_PER_USEC;
+	hdd_debug("PM QoS current value: %lld", curr_val_us);
+	if (!wlan_hdd_is_cpu_cxpc_allowed(curr_val_us))
+		return true;
+	else
+		return false;
+}
+#endif
 #endif
 
 /**
@@ -1420,14 +1458,6 @@ flush_mc_list:
 static void hdd_update_conn_state_mask(struct hdd_adapter *adapter,
 				       uint32_t *conn_state_mask)
 {
-
-	eConnectionState conn_state;
-	struct hdd_station_ctx *sta_ctx;
-
-	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
-
-	conn_state = sta_ctx->conn_info.conn_state;
-
 	if (hdd_cm_is_vdev_associated(adapter))
 		*conn_state_mask |= (1 << adapter->vdev_id);
 }
@@ -1623,6 +1653,8 @@ QDF_STATUS hdd_wlan_shutdown(void)
 		hdd_ctx->is_scheduler_suspended = false;
 		hdd_ctx->is_wiphy_suspended = false;
 		hdd_ctx->hdd_wlan_suspended = false;
+		ucfg_pmo_resume_all_components(hdd_ctx->psoc,
+					       QDF_SYSTEM_SUSPEND);
 	}
 
 	wlan_hdd_rx_thread_resume(hdd_ctx);
@@ -1895,6 +1927,9 @@ QDF_STATUS hdd_wlan_re_init(void)
 	if (hdd_ctx->is_wiphy_suspended)
 		hdd_ctx->is_wiphy_suspended = false;
 
+	if (hdd_ctx->hdd_wlan_suspended)
+		hdd_ctx->hdd_wlan_suspended = false;
+
 	return QDF_STATUS_SUCCESS;
 
 err_re_init:
@@ -1915,6 +1950,7 @@ int wlan_hdd_set_powersave(struct hdd_adapter *adapter,
 	struct hdd_context *hdd_ctx;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	bool is_bmps_enabled;
+	struct hdd_station_ctx *hdd_sta_ctx = NULL;
 
 	if (!adapter) {
 		hdd_err("Adapter NULL");
@@ -1924,6 +1960,12 @@ int wlan_hdd_set_powersave(struct hdd_adapter *adapter,
 	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
 	if (!hdd_ctx) {
 		hdd_err("hdd context is NULL");
+		return -EINVAL;
+	}
+
+	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+	if (!hdd_sta_ctx) {
+		hdd_err("hdd_sta_context is NULL");
 		return -EINVAL;
 	}
 
@@ -1952,7 +1994,7 @@ int wlan_hdd_set_powersave(struct hdd_adapter *adapter,
 				goto end;
 		}
 
-		sme_save_usr_ps_cfg(mac_handle, true);
+		ucfg_mlme_set_user_ps(hdd_ctx->psoc, adapter->vdev_id, true);
 		ucfg_mlme_is_bmps_enabled(hdd_ctx->psoc, &is_bmps_enabled);
 		if (is_bmps_enabled) {
 			hdd_debug("Wlan driver Entering Power save");
@@ -1980,7 +2022,7 @@ int wlan_hdd_set_powersave(struct hdd_adapter *adapter,
 	} else {
 		hdd_debug("Wlan driver Entering Full Power");
 
-		sme_save_usr_ps_cfg(mac_handle, false);
+		ucfg_mlme_set_user_ps(hdd_ctx->psoc, adapter->vdev_id, false);
 		/*
 		 * Enter Full power command received from GUI
 		 * this means we are disconnected
@@ -1992,10 +2034,19 @@ int wlan_hdd_set_powersave(struct hdd_adapter *adapter,
 			goto end;
 
 		ucfg_mlme_is_bmps_enabled(hdd_ctx->psoc, &is_bmps_enabled);
-		if (is_bmps_enabled)
+		if (is_bmps_enabled) {
 			status = sme_ps_enable_disable(mac_handle,
 						       adapter->vdev_id,
 						       SME_PS_DISABLE);
+			if (status != QDF_STATUS_SUCCESS)
+				goto end;
+		}
+
+		if (adapter->device_mode == QDF_STA_MODE) {
+			hdd_twt_del_dialog_in_ps_disable(hdd_ctx,
+						&hdd_sta_ctx->conn_info.bssid,
+						adapter->vdev_id);
+		}
 	}
 
 end:

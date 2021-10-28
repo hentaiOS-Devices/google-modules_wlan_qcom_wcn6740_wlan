@@ -29,6 +29,7 @@
 
 #include "wlan_objmgr_cmn.h"
 #include "qdf_nbuf.h"
+#include "wlan_mgmt_txrx_rx_reo_public_structs.h"
 
 #define mgmt_txrx_alert(params...) \
 	QDF_TRACE_FATAL(QDF_MODULE_ID_MGMT_TXRX, params)
@@ -773,6 +774,7 @@ enum mgmt_frame_type {
  * @pdev_id: pdev id
  * @rx_params: pointer to other rx params
  *             (win specific, will be removed in phase 4)
+ * @reo_params: Pointer to MGMT Rx REO params
  */
 struct mgmt_rx_event_params {
 	uint32_t    chan_freq;
@@ -789,7 +791,55 @@ struct mgmt_rx_event_params {
 	uint32_t    tsf_l32;
 	uint8_t     pdev_id;
 	void        *rx_params;
+#ifdef WLAN_MGMT_RX_REO_SUPPORT
+	struct mgmt_rx_reo_params *reo_params;
+#endif
 };
+
+#ifdef WLAN_MGMT_RX_REO_SUPPORT
+static inline
+struct mgmt_rx_event_params *alloc_mgmt_rx_event_params(void)
+{
+	struct mgmt_rx_event_params *rx_params;
+
+	rx_params = qdf_mem_malloc(sizeof(struct mgmt_rx_event_params));
+	if (!rx_params)
+		return NULL;
+
+	rx_params->reo_params =
+		qdf_mem_malloc(sizeof(struct mgmt_rx_reo_params));
+
+	if (!rx_params->reo_params) {
+		qdf_mem_free(rx_params);
+		return NULL;
+	}
+
+	return rx_params;
+}
+
+static inline void
+free_mgmt_rx_event_params(struct mgmt_rx_event_params *rx_params)
+{
+	if (rx_params)
+		qdf_mem_free(rx_params->reo_params);
+
+	qdf_mem_free(rx_params);
+}
+#else
+static inline
+struct mgmt_rx_event_params *alloc_mgmt_rx_event_params(void)
+{
+	struct mgmt_rx_event_params *rx_params;
+
+	rx_params = qdf_mem_malloc(sizeof(struct mgmt_rx_event_params));
+	if (!rx_params)
+		return NULL;
+
+	return rx_params;
+}
+
+#define free_mgmt_rx_event_params(rx_params) qdf_mem_free((rx_params))
+#endif
 
 /**
  * mgmt_tx_download_comp_cb - function pointer for tx download completions.

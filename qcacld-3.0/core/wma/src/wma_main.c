@@ -116,6 +116,7 @@
 
 #include "wlan_pkt_capture_ucfg_api.h"
 #include "target_if_cm_roam_event.h"
+#include "wlan_fwol_ucfg_api.h"
 
 #define WMA_LOG_COMPLETION_TIMER 3000 /* 3 seconds */
 #define WMI_TLV_HEADROOM 128
@@ -3204,6 +3205,12 @@ QDF_STATUS wma_open(struct wlan_objmgr_psoc *psoc,
 		goto err_event_init;
 	}
 
+	qdf_status = qdf_mutex_create(&wma_handle->radio_stats_lock);
+	if (QDF_IS_STATUS_ERROR(qdf_status)) {
+		wma_err("Failed to create radio stats mutex");
+		goto err_event_init;
+	}
+
 	qdf_list_create(&wma_handle->wma_hold_req_queue,
 		      MAX_ENTRY_HOLD_REQ_QUEUE);
 	qdf_spinlock_create(&wma_handle->wma_hold_req_q_lock);
@@ -3363,18 +3370,18 @@ QDF_STATUS wma_open(struct wlan_objmgr_psoc *psoc,
 					wmi_roam_scan_chan_list_id,
 					wma_roam_scan_chan_list_event_handler,
 					WMA_RX_SERIALIZER_CTX);
-#endif /* ROAM_TARGET_IF_CONVERGENCE */
-	wmi_unified_register_event_handler(wma_handle->wmi_handle,
-					   wmi_roam_auth_offload_event_id,
-					   wma_roam_auth_offload_event_handler,
-					   WMA_RX_SERIALIZER_CTX);
 
 	wmi_unified_register_event_handler(wma_handle->wmi_handle,
 					   wmi_roam_stats_event_id,
 					   wma_roam_stats_event_handler,
 					   WMA_RX_SERIALIZER_CTX);
 
+	wmi_unified_register_event_handler(wma_handle->wmi_handle,
+					   wmi_roam_auth_offload_event_id,
+					   wma_roam_auth_offload_event_handler,
+					   WMA_RX_SERIALIZER_CTX);
 	wma_register_pmkid_req_event_handler(wma_handle);
+#endif /* ROAM_TARGET_IF_CONVERGENCE */
 
 #endif /* WLAN_FEATURE_ROAM_OFFLOAD */
 	wmi_unified_register_event_handler(wma_handle->wmi_handle,
@@ -3492,6 +3499,10 @@ QDF_STATUS wma_open(struct wlan_objmgr_psoc *psoc,
 	return QDF_STATUS_SUCCESS;
 
 err_dbglog_init:
+	qdf_status = qdf_mutex_destroy(&wma_handle->radio_stats_lock);
+	if (QDF_IS_STATUS_ERROR(qdf_status))
+		wma_err("Failed to destroy radio stats mutex");
+
 	qdf_wake_lock_destroy(&wma_handle->wmi_cmd_rsp_wake_lock);
 	qdf_runtime_lock_deinit(&wma_handle->sap_prevent_runtime_pm_lock);
 	qdf_runtime_lock_deinit(&wma_handle->wmi_cmd_rsp_runtime_lock);
@@ -3886,6 +3897,37 @@ void wma_process_pdev_hw_mode_trans_ind(void *handle,
 		 wma->old_hw_mode_index, wma->new_hw_mode_index);
 }
 
+static void
+wma_process_mac_freq_mapping(struct cm_hw_mode_trans_ind *hw_mode_trans_ind,
+		WMI_PDEV_HW_MODE_TRANSITION_EVENTID_param_tlvs *param_buf)
+{
+	uint32_t i, num_mac_freq;
+	wmi_pdev_band_to_mac *mac_freq;
+
+	mac_freq = param_buf->mac_freq_mapping;
+	num_mac_freq = param_buf->num_mac_freq_mapping;
+
+	if (!mac_freq) {
+		wma_debug("mac_freq Null");
+		return;
+	}
+
+	if (!num_mac_freq || num_mac_freq > MAX_FREQ_RANGE_NUM) {
+		wma_debug("num mac freq invalid %d", num_mac_freq);
+		return;
+	}
+
+	hw_mode_trans_ind->num_freq_map = num_mac_freq;
+	for (i = 0; i < num_mac_freq; i++) {
+		hw_mode_trans_ind->mac_freq_map[i].pdev_id =
+							mac_freq[i].pdev_id;
+		hw_mode_trans_ind->mac_freq_map[i].start_freq =
+							mac_freq[i].start_freq;
+		hw_mode_trans_ind->mac_freq_map[i].end_freq =
+							mac_freq[i].end_freq;
+	}
+}
+
 /**
  * wma_pdev_hw_mode_transition_evt_handler() - HW mode transition evt handler
  * @handle: WMI handle
@@ -3942,8 +3984,10 @@ static int wma_pdev_hw_mode_transition_evt_handler(void *handle,
 		qdf_mem_free(hw_mode_trans_ind);
 		return -EINVAL;
 	}
+
 	wma_process_pdev_hw_mode_trans_ind(wma, wmi_event, vdev_mac_entry,
 		hw_mode_trans_ind);
+	wma_process_mac_freq_mapping(hw_mode_trans_ind, param_buf);
 	/* Pass the message to PE */
 	wma_send_msg(wma, SIR_HAL_PDEV_HW_MODE_TRANS_IND,
 		     (void *) hw_mode_trans_ind, 0);
@@ -4541,6 +4585,10 @@ QDF_STATUS wma_close(void)
 	}
 
 	wma_unified_radio_tx_mem_free(wma_handle);
+
+	qdf_status = qdf_mutex_destroy(&wma_handle->radio_stats_lock);
+	if (QDF_IS_STATUS_ERROR(qdf_status))
+		wma_err("Failed to destroy radio stats mutex");
 
 	if (wma_handle->pdev) {
 		wlan_objmgr_pdev_release_ref(wma_handle->pdev,
@@ -5842,11 +5890,52 @@ static void wma_set_mc_cp_caps(struct wlan_objmgr_psoc *psoc)
 		ucfg_mc_cp_set_big_data_fw_support(psoc, false);
 }
 
+#ifdef THERMAL_STATS_SUPPORT
+static void wma_set_thermal_stats_fw_cap(tp_wma_handle wma,
+					 struct wlan_fwol_capability_info *cap)
+{
+	cap->fw_thermal_stats_cap = wmi_service_enabled(wma->wmi_handle,
+				wmi_service_thermal_stats_temp_range_supported);
+}
+#else
+static void wma_set_thermal_stats_fw_cap(tp_wma_handle wma,
+					 struct wlan_fwol_capability_info *cap)
+{
+}
+#endif
+
+/**
+ * wma_set_fwol_caps() - Populate fwol component related capabilities
+ *			 to the fwol component
+ *
+ * @psoc: Pointer to psoc object
+ *
+ * Return: None
+ */
+static void wma_set_fwol_caps(struct wlan_objmgr_psoc *psoc)
+{
+	tp_wma_handle wma;
+	struct wlan_fwol_capability_info cap_info;
+	wma = cds_get_context(QDF_MODULE_ID_WMA);
+
+	if (!wma) {
+		wma_err_rl("wma Null");
+		return;
+	}
+	if (!psoc) {
+		wma_err_rl("psoc Null");
+		return;
+	}
+
+	wma_set_thermal_stats_fw_cap(wma, &cap_info);
+	ucfg_fwol_update_fw_cap_info(psoc, &cap_info);
+}
 static void wma_set_component_caps(struct wlan_objmgr_psoc *psoc)
 {
 	wma_set_pmo_caps(psoc);
 	wma_set_mlme_caps(psoc);
 	wma_set_mc_cp_caps(psoc);
+	wma_set_fwol_caps(psoc);
 }
 
 #if defined(WLAN_FEATURE_GTK_OFFLOAD) && defined(WLAN_POWER_MANAGEMENT_OFFLOAD)
@@ -7362,7 +7451,7 @@ static void wma_set_wifi_start_packet_stats(void *wma_handle,
 		return;
 	}
 
-#ifdef HELIUMPLUS
+#ifdef PKTLOG_LEGACY
 	log_state = ATH_PKTLOG_ANI | ATH_PKTLOG_RCUPDATE | ATH_PKTLOG_RCFIND |
 		ATH_PKTLOG_RX | ATH_PKTLOG_TX |
 		ATH_PKTLOG_TEXT | ATH_PKTLOG_SW_EVENT;

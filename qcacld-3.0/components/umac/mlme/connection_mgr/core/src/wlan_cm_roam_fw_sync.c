@@ -141,6 +141,7 @@ cm_fw_roam_sync_start_ind(struct wlan_objmgr_vdev *vdev,
 	if (IS_ROAM_REASON_STA_KICKOUT(roam_reason)) {
 		struct reject_ap_info ap_info;
 
+		qdf_mem_zero(&ap_info, sizeof(struct reject_ap_info));
 		ap_info.bssid = connected_bssid;
 		ap_info.reject_ap_type = DRIVER_AVOID_TYPE;
 		ap_info.reject_reason = REASON_STA_KICKOUT;
@@ -798,6 +799,7 @@ cm_fw_roam_sync_propagation(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 	cm_if_mgr_inform_connect_complete(cm_ctx->vdev,
 					  connect_rsp->connect_status);
 	cm_inform_blm_connect_complete(cm_ctx->vdev, connect_rsp);
+	cm_update_owe_info(vdev, connect_rsp, vdev_id);
 	cm_connect_info(vdev, true, &connect_rsp->bssid, &connect_rsp->ssid,
 			connect_rsp->freq);
 	wlan_tdls_notify_sta_connect(vdev_id,
@@ -894,7 +896,7 @@ QDF_STATUS cm_fw_roam_complete(struct cnx_mgr *cm_ctx, void *data)
 		roam_synch_data->hw_mode_trans_ind.new_hw_mode_index,
 		roam_synch_data->hw_mode_trans_ind.num_vdev_mac_entries,
 		roam_synch_data->hw_mode_trans_ind.vdev_mac_map,
-		psoc);
+		0, NULL, psoc);
 
 	cm_check_and_set_sae_single_pmk_cap(psoc, vdev_id);
 
@@ -1067,6 +1069,7 @@ static QDF_STATUS cm_handle_ho_fail(struct scheduler_msg *msg)
 	cm_sm_deliver_event(vdev, WLAN_CM_SM_EV_ROAM_HO_FAIL,
 			    sizeof(wlan_cm_id), &cm_id);
 
+	qdf_mem_zero(&ap_info, sizeof(struct reject_ap_info));
 	ap_info.bssid = ind->bssid;
 	ap_info.reject_ap_type = DRIVER_AVOID_TYPE;
 	ap_info.reject_reason = REASON_ROAM_HO_FAILURE;
@@ -1126,43 +1129,6 @@ void cm_fw_ho_fail_req(struct wlan_objmgr_psoc *psoc,
 		return;
 	}
 }
-
-#ifdef WLAN_FEATURE_FIPS
-QDF_STATUS cm_roam_pmkid_req_ind(struct wlan_objmgr_psoc *psoc,
-				 uint8_t vdev_id,
-				 struct roam_pmkid_req_event *src_lst)
-{
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
-	struct wlan_objmgr_vdev *vdev;
-	struct qdf_mac_addr *dst_list;
-	uint32_t num_entries, i;
-
-	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, vdev_id,
-						    WLAN_MLME_SB_ID);
-	if (!vdev) {
-		mlme_err("vdev object is NULL");
-		return QDF_STATUS_E_NULL_VALUE;
-	}
-
-	num_entries = src_lst->num_entries;
-	mlme_debug("Num entries %d", num_entries);
-	for (i = 0; i < num_entries; i++) {
-		dst_list = &src_lst->ap_bssid[i];
-		status = mlme_cm_osif_pmksa_candidate_notify(vdev, dst_list,
-							     1, false);
-		if (QDF_IS_STATUS_ERROR(status)) {
-			mlme_err("Number %d Notify failed for " QDF_MAC_ADDR_FMT,
-				 i, QDF_MAC_ADDR_REF(dst_list->bytes));
-			goto rel_ref;
-		}
-	}
-
-rel_ref:
-	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_SB_ID);
-
-	return status;
-}
-#endif /* WLAN_FEATURE_FIPS */
 
 #ifdef ROAM_TARGET_IF_CONVERGENCE
 QDF_STATUS wlan_cm_free_roam_synch_frame_ind(struct rso_config *rso_cfg)

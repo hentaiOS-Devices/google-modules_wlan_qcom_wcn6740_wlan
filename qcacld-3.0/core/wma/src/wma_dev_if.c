@@ -93,6 +93,7 @@
 #include <wlan_cm_api.h>
 #include <../../core/src/wlan_cm_vdev_api.h>
 #include "wlan_nan_api.h"
+#include "wlan_mlo_mgr_peer.h"
 #ifdef DCS_INTERFERENCE_DETECTION
 #include <wlan_dcs_ucfg_api.h>
 #endif
@@ -1843,6 +1844,26 @@ static QDF_STATUS wma_cdp_peer_create(ol_txrx_soc_handle dp_soc,
 #endif
 
 /**
+ * wma_update_mlo_peer_create() - update mlo parameter for peer creation
+ * @param: peer create param
+ * @mlo_enable: mlo enable or not
+ *
+ * Return: Void
+ */
+#ifdef WLAN_FEATURE_11BE_MLO
+static void wma_update_mlo_peer_create(struct peer_create_params *param,
+				       bool mlo_enable)
+{
+	param->mlo_enabled = mlo_enable;
+}
+#else
+static void wma_update_mlo_peer_create(struct peer_create_params *param,
+				       bool mlo_enable)
+{
+}
+#endif
+
+/**
  * wma_add_peer() - send peer create command to fw
  * @wma: wma handle
  * @peer_addr: peer mac addr
@@ -1910,6 +1931,7 @@ QDF_STATUS wma_add_peer(tp_wma_handle wma,
 			  QDF_MAC_ADDR_REF(peer_mld_addr));
 		wlan_peer_mlme_set_mldaddr(obj_peer, peer_mld_addr);
 		wlan_peer_mlme_set_assoc_peer(obj_peer, is_assoc_peer);
+		wma_update_mlo_peer_create(&param, true);
 	}
 	status = wma_cdp_peer_create(dp_soc, vdev_id, peer_addr, obj_peer);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -2363,10 +2385,12 @@ wma_delete_peer_on_vdev_stop(tp_wma_handle wma, uint8_t vdev_id)
 	}
 
 #ifdef WLAN_FEATURE_11BE_MLO
-	peer = wlan_objmgr_get_peer_by_mac(wma.psoc, &bssid.bytes,
+	peer = wlan_objmgr_get_peer_by_mac(wma->psoc, bssid.bytes,
 					   WLAN_LEGACY_WMA_ID);
-	if (peer)
+	if (peer) {
 		wlan_mlo_link_peer_delete(peer);
+		wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_WMA_ID);
+	}
 #endif
 
 	vdev_stop_resp = qdf_mem_malloc(sizeof(*vdev_stop_resp));
@@ -3145,8 +3169,8 @@ int wma_peer_create_confirm_handler(void *handle, uint8_t *evt_param_info,
 	req_msg = wma_find_remove_req_msgtype(wma, peer_create_rsp->vdev_id,
 					      WMA_PEER_CREATE_REQ);
 	if (!req_msg) {
-		wma_err("vdev:%d Failed to lookup peer create request message",
-			peer_create_rsp->vdev_id);
+		wma_debug("vdev:%d Failed to lookup peer create request msg",
+			  peer_create_rsp->vdev_id);
 		return -EINVAL;
 	}
 

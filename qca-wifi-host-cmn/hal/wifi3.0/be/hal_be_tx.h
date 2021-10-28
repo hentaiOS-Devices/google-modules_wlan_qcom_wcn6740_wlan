@@ -22,6 +22,10 @@
 #include "hal_be_hw_headers.h"
 #include "hal_tx.h"
 
+/* Number of TX banks reserved i.e, will not be used by host driver. */
+/* MAX_TCL_BANK reserved for FW use */
+#define HAL_TX_NUM_RESERVED_BANKS 1
+
 enum hal_be_tx_ret_buf_manager {
 	HAL_BE_WBM_SW0_BM_ID = 5,
 	HAL_BE_WBM_SW1_BM_ID = 6,
@@ -416,11 +420,15 @@ static inline uint8_t
 hal_tx_get_num_tcl_banks(hal_soc_handle_t hal_soc_hdl)
 {
 	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+	int  hal_banks = 0;
 
-	if (hal_soc->ops->hal_tx_get_num_tcl_banks)
-		return hal_soc->ops->hal_tx_get_num_tcl_banks();
+	if (hal_soc->ops->hal_tx_get_num_tcl_banks) {
+		hal_banks =  hal_soc->ops->hal_tx_get_num_tcl_banks();
+		hal_banks -= HAL_TX_NUM_RESERVED_BANKS;
+		hal_banks = (hal_banks < 0) ? 0 : hal_banks;
+	}
 
-	return 0;
+	return hal_banks;
 }
 
 /**
@@ -529,11 +537,12 @@ hal_tx_populate_bank_register(hal_soc_handle_t hal_soc_hdl,
  * Return: void
  */
 static inline void
-hal_tx_config_rbm_mapping_be(struct hal_soc *hal_soc,
+hal_tx_config_rbm_mapping_be(hal_soc_handle_t hal_soc_hdl,
 			     hal_ring_handle_t hal_ring_hdl,
 			     uint8_t rbm_id)
 {
 	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
 	uint32_t reg_addr = 0;
 	uint32_t reg_val = 0;
 	uint32_t val = 0;
@@ -542,7 +551,7 @@ hal_tx_config_rbm_mapping_be(struct hal_soc *hal_soc,
 
 	ring_type = srng->ring_type;
 	ring_num = hal_soc->hw_srng_table[ring_type].start_ring_id;
-	ring_num = ring_num - srng->ring_id;
+	ring_num = srng->ring_id - ring_num;
 
 	reg_addr = HWIO_TCL_R0_RBM_MAPPING0_ADDR(MAC_TCL_REG_REG_BASE);
 
@@ -565,7 +574,7 @@ hal_tx_config_rbm_mapping_be(struct hal_soc *hal_soc,
 }
 #else
 static inline void
-hal_tx_config_rbm_mapping_be(struct hal_soc *hal_soc,
+hal_tx_config_rbm_mapping_be(hal_soc_handle_t hal_soc_hdl,
 			     hal_ring_handle_t hal_ring_hdl,
 			     uint8_t rbm_id)
 {

@@ -22,6 +22,7 @@
 #ifndef _WLAN_MLME_MAIN_H_
 #define _WLAN_MLME_MAIN_H_
 
+#include "qdf_periodic_work.h"
 #include <wlan_mlme_public_struct.h>
 #include <wlan_objmgr_psoc_obj.h>
 #include <wlan_objmgr_global_obj.h>
@@ -70,6 +71,20 @@
 enum size_of_len_field {
 	ONE_BYTE = 1,
 	TWO_BYTE = 2
+};
+
+enum medium_access_type {
+	MEDIUM_ACCESS_AUTO = 0,
+	MEDIUM_ACCESS_DCF,
+	MEDIUM_ACCESS_11E_EDCF,
+	MEDIUM_ACCESS_WMM_EDCF_DSCP,
+};
+
+enum wmm_user_mode {
+	WMM_USER_MODE_AUTO = 0,
+	WMM_USER_MODE_QBSS_ONLY = 1,
+	WMM_USER_MODE_NO_QOS = 2,
+
 };
 
 struct pwr_channel_info {
@@ -378,6 +393,7 @@ struct wait_for_key_timer {
  * @hb_failure_rssi: heartbeat failure AP RSSI
  * @opr_rate_set: operational rates set
  * @ext_opr_rate_set: extended operational rates set
+ * @mcs_rate_set: MCS Based rates set
  * @mscs_req_info: Information related to mscs request
  * @he_config: he config
  * @he_sta_obsspd: he_sta_obsspd
@@ -390,6 +406,7 @@ struct wait_for_key_timer {
  * @last_delba_sent_time: Last delba sent time to handle back to back delba
  *			  requests from some IOT APs
  * @ba_2k_jump_iot_ap: This is set to true if connected to the ba 2k jump IOT AP
+ * @is_usr_ps_enabled: Is Power save enabled
  */
 struct mlme_legacy_priv {
 	bool chan_switch_in_progress;
@@ -413,6 +430,7 @@ struct mlme_legacy_priv {
 	uint32_t hb_failure_rssi;
 	struct mlme_cfg_str opr_rate_set;
 	struct mlme_cfg_str ext_opr_rate_set;
+	struct mlme_cfg_str mcs_rate_set;
 	bool twt_wait_for_notify;
 #ifdef WLAN_FEATURE_MSCS
 	struct mscs_req_info mscs_req_info;
@@ -428,6 +446,7 @@ struct mlme_legacy_priv {
 #endif
 	qdf_time_t last_delba_sent_time;
 	bool ba_2k_jump_iot_ap;
+	bool is_usr_ps_enabled;
 };
 
 /**
@@ -958,6 +977,26 @@ mlme_set_operations_bitmap(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
  */
 void
 mlme_clear_operations_bitmap(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id);
+
+/**
+ * mlme_get_cfg_wlm_level() - Get the WLM level value
+ * @psoc: pointer to psoc object
+ * @level: level that needs to be filled.
+ *
+ * Return: QDF Status
+ */
+QDF_STATUS mlme_get_cfg_wlm_level(struct wlan_objmgr_psoc *psoc,
+				  uint8_t *level);
+
+/**
+ * mlme_get_cfg_wlm_reset() - Get the WLM reset flag
+ * @psoc: pointer to psoc object
+ * @reset: reset that needs to be filled.
+ *
+ * Return: QDF Status
+ */
+QDF_STATUS mlme_get_cfg_wlm_reset(struct wlan_objmgr_psoc *psoc,
+				  bool *reset);
 
 #define MLME_IS_ROAM_STATE_RSO_ENABLED(psoc, vdev_id) \
 	(mlme_get_roam_state(psoc, vdev_id) == WLAN_ROAM_RSO_ENABLED)

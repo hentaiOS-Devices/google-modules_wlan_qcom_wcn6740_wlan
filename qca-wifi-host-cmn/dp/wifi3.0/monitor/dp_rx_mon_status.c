@@ -441,25 +441,6 @@ dp_rx_populate_cdp_indication_ppdu(struct dp_pdev *pdev,
 		cdp_rx_ppdu->is_ampdu = 0;
 	cdp_rx_ppdu->tid = ppdu_info->rx_status.tid;
 
-	qdf_assert_always(num_users <= CDP_MU_MAX_USERS);
-	rx_user_status = &ppdu_info->rx_user_status[num_users - 1];
-
-	sw_peer_id = rx_user_status->sw_peer_id;
-
-	peer = dp_peer_get_ref_by_id(soc, sw_peer_id,
-				     DP_MOD_ID_RX_PPDU_STATS);
-
-	if (!peer) {
-		cdp_rx_ppdu->peer_id = HTT_INVALID_PEER;
-		cdp_rx_ppdu->num_users = 0;
-		goto end;
-	}
-
-	qdf_mem_copy(cdp_rx_ppdu->mac_addr,
-		     peer->mac_addr.raw, QDF_MAC_ADDR_SIZE);
-	cdp_rx_ppdu->peer_id = peer->peer_id;
-	cdp_rx_ppdu->vdev_id = peer->vdev->vdev_id;
-
 	cdp_rx_ppdu->ppdu_id = ppdu_info->com_info.ppdu_id;
 	cdp_rx_ppdu->length = ppdu_info->rx_status.ppdu_len;
 	cdp_rx_ppdu->duration = ppdu_info->rx_status.duration;
@@ -507,6 +488,31 @@ dp_rx_populate_cdp_indication_ppdu(struct dp_pdev *pdev,
 
 	cdp_rx_ppdu->num_mpdu = 0;
 	cdp_rx_ppdu->num_msdu = 0;
+
+	/* Sanity check for num_users */
+	if (!num_users) {
+		cdp_rx_ppdu->peer_id = HTT_INVALID_PEER;
+		return;
+	}
+
+	qdf_assert_always(num_users <= CDP_MU_MAX_USERS);
+	rx_user_status = &ppdu_info->rx_user_status[num_users - 1];
+
+	sw_peer_id = rx_user_status->sw_peer_id;
+
+	peer = dp_peer_get_ref_by_id(soc, sw_peer_id,
+				     DP_MOD_ID_RX_PPDU_STATS);
+
+	if (!peer) {
+		cdp_rx_ppdu->peer_id = HTT_INVALID_PEER;
+		cdp_rx_ppdu->num_users = 0;
+		goto end;
+	}
+
+	qdf_mem_copy(cdp_rx_ppdu->mac_addr,
+		     peer->mac_addr.raw, QDF_MAC_ADDR_SIZE);
+	cdp_rx_ppdu->peer_id = peer->peer_id;
+	cdp_rx_ppdu->vdev_id = peer->vdev->vdev_id;
 
 	dp_rx_populate_cdp_indication_ppdu_user(pdev, ppdu_info, cdp_rx_ppdu);
 
@@ -558,12 +564,21 @@ static inline void dp_rx_rate_stats_update(struct dp_peer *peer,
 			nss = ppdu_user->nss - 1;
 		mcs = ppdu_user->mcs;
 
+		if (peer) {
+			peer->stats.rx.nss_info = ppdu_user->nss;
+			peer->stats.rx.mcs_info = ppdu_user->mcs;
+		}
 	} else {
 		if (ppdu->u.nss == 0)
 			nss = 0;
 		else
 			nss = ppdu->u.nss - 1;
 		mcs = ppdu->u.mcs;
+
+		if (peer) {
+			peer->stats.rx.nss_info = ppdu->u.nss;
+			peer->stats.rx.mcs_info = ppdu->u.mcs;
+		}
 	}
 
 	ratekbps = dp_getrateindex(ppdu->u.gi,
@@ -580,6 +595,12 @@ static inline void dp_rx_rate_stats_update(struct dp_peer *peer,
 		ppdu->rx_ratecode = 0;
 		ppdu_user->rx_ratekbps = 0;
 		return;
+	}
+
+	if (peer) {
+		peer->stats.rx.bw_info = ppdu->u.bw;
+		peer->stats.rx.gi_info = ppdu->u.gi;
+		peer->stats.rx.preamble_info = ppdu->u.preamble;
 	}
 
 	ppdu->rix = rix;
@@ -1586,6 +1607,10 @@ dp_rx_process_peer_based_pktlog(struct dp_soc *soc,
 	struct mon_rx_user_status *rx_user_status;
 	uint32_t num_users = ppdu_info->com_info.num_users;
 	uint16_t sw_peer_id;
+
+	/* Sanity check for num_users */
+	if (!num_users)
+		return;
 
 	qdf_assert_always(num_users <= CDP_MU_MAX_USERS);
 	rx_user_status = &ppdu_info->rx_user_status[num_users - 1];

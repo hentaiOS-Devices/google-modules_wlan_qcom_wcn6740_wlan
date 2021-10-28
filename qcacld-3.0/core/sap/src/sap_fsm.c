@@ -245,7 +245,16 @@ static qdf_freq_t sap_random_channel_sel(struct sap_context *sap_ctx)
 	 */
 	flag |= DFS_RANDOM_CH_FLAG_NO_6GHZ_CH;
 
-	if (QDF_IS_STATUS_ERROR(utils_dfs_get_vdev_random_channel_for_freq(
+	if (sap_ctx->candidate_freq &&
+	    sap_ctx->chan_freq != sap_ctx->candidate_freq &&
+	    !utils_dfs_is_freq_in_nol(pdev, sap_ctx->candidate_freq)) {
+		chan_freq = sap_ctx->candidate_freq;
+		wlan_reg_set_channel_params_for_freq(pdev, chan_freq, 0,
+						     ch_params);
+		sap_debug("random chan select candidate freq=%d", chan_freq);
+		sap_ctx->candidate_freq = 0;
+	} else if (QDF_IS_STATUS_ERROR(
+				utils_dfs_get_vdev_random_channel_for_freq(
 					pdev, sap_ctx->vdev, flag, ch_params,
 					&hw_mode, &chan_freq, &acs_info))) {
 		/* No available channel found */
@@ -438,30 +447,24 @@ static
 bool sap_operating_on_dfs(struct mac_context *mac_ctx,
 			  struct sap_context *sap_ctx)
 {
-	uint8_t is_dfs = false;
-	uint32_t chan_freq = sap_ctx->chan_freq;
+	struct wlan_channel *chan;
 
-	if (WLAN_REG_IS_6GHZ_CHAN_FREQ(chan_freq) ||
-	    WLAN_REG_IS_24GHZ_CH_FREQ(chan_freq))
+	if (!sap_ctx->vdev) {
+		sap_debug("vdev invalid");
 		return false;
-	if (sap_ctx->ch_params.ch_width == CH_WIDTH_160MHZ) {
-		is_dfs = true;
-	} else if (sap_ctx->ch_params.ch_width == CH_WIDTH_80P80MHZ) {
-		if (wlan_reg_is_passive_or_disable_for_freq(
-						mac_ctx->pdev,
-						chan_freq) ||
-		    wlan_reg_is_passive_or_disable_for_freq(
-					mac_ctx->pdev,
-					sap_ctx->ch_params.mhz_freq_seg1 - 10))
-			is_dfs = true;
-	} else {
-		if (wlan_reg_is_passive_or_disable_for_freq(
-						mac_ctx->pdev,
-						chan_freq))
-			is_dfs = true;
 	}
 
-	return is_dfs;
+	chan = wlan_vdev_get_active_channel(sap_ctx->vdev);
+	if (!chan) {
+		sap_debug("Couldn't get vdev active channel");
+		return false;
+	}
+
+	if (chan->ch_flagext & (IEEE80211_CHAN_DFS |
+				IEEE80211_CHAN_DFS_CFREQ2))
+		return true;
+
+	return false;
 }
 
 void sap_get_cac_dur_dfs_region(struct sap_context *sap_ctx,
@@ -795,6 +798,41 @@ static bool is_mcc_preferred(struct sap_context *sap_context,
 	return false;
 }
 
+#ifdef WLAN_FEATURE_P2P_P2P_STA
+/**
+ * sap_set_forcescc_required - set force scc flag for provided p2p go vdev
+ *
+ * vdev_id - vdev_id for which flag needs to be set
+ *
+ * Return: None
+ */
+static void sap_set_forcescc_required(uint8_t vdev_id)
+{
+	struct mac_context *mac_ctx;
+	struct sap_context *sap_ctx;
+	uint8_t i = 0;
+
+	mac_ctx = sap_get_mac_context();
+	if (!mac_ctx) {
+		sap_err("Invalid MAC context");
+		return;
+	}
+
+	for (i = 0; i < SAP_MAX_NUM_SESSION; i++) {
+		sap_ctx = mac_ctx->sap.sapCtxList[i].sap_context;
+		if (QDF_P2P_GO_MODE == mac_ctx->sap.sapCtxList[i].sapPersona &&
+		    sap_ctx->sessionId == vdev_id) {
+			sap_debug("update forcescc restart for vdev %d",
+				  vdev_id);
+			sap_ctx->is_forcescc_restart_required = true;
+		}
+	}
+}
+#else
+static void sap_set_forcescc_required(uint8_t vdev_id)
+{}
+#endif
+
 QDF_STATUS
 sap_validate_chan(struct sap_context *sap_context,
 		  bool pre_start_bss,
@@ -810,6 +848,8 @@ sap_validate_chan(struct sap_context *sap_context,
 	uint32_t concurrent_state;
 	bool go_force_scc;
 	struct ch_params ch_params;
+	bool is_go_scc_strict = false;
+	uint8_t first_p2p_go_vdev_id = WLAN_UMAC_VDEV_ID_MAX;
 
 	mac_handle = cds_get_context(QDF_MODULE_ID_SME);
 	mac_ctx = MAC_CONTEXT(mac_handle);
@@ -823,10 +863,45 @@ sap_validate_chan(struct sap_context *sap_context,
 		sap_err("Invalid channel");
 		return QDF_STATUS_E_FAILURE;
 	}
-	go_force_scc = policy_mgr_go_scc_enforced(mac_ctx->psoc);
-	if (sap_context->vdev && !go_force_scc &&
-	    (wlan_vdev_mlme_get_opmode(sap_context->vdev) == QDF_P2P_GO_MODE))
-		goto validation_done;
+
+	if (sap_context->vdev &&
+	    sap_context->vdev->vdev_mlme.vdev_opmode == QDF_P2P_GO_MODE) {
+	       /*
+		* check whether go_force_scc is enabled or not.
+		* If it not enabled then don't any force scc on existing and new
+		* p2p go vdevs.
+		* Otherwise, if it is enabled then check whether it's in strict
+		* mode or liberal mode.
+		* For strict mode, do force scc on newly p2p go to existing p2p
+		* go channel.
+		* For liberal mode, first form new p2p go on requested channel.
+		* Once set key is done, do force scc on existing p2p go to new
+		* p2p go channel.
+		*/
+		go_force_scc = policy_mgr_go_scc_enforced(mac_ctx->psoc);
+		sap_debug("go force scc value %d", go_force_scc);
+		if (go_force_scc) {
+			is_go_scc_strict =
+				policy_mgr_is_go_scc_strict(mac_ctx->psoc);
+			if (!is_go_scc_strict) {
+				sap_debug("liberal mode is enabled");
+				first_p2p_go_vdev_id =
+					policy_mgr_check_forcescc_for_other_go(
+						mac_ctx->psoc,
+						sap_context->sessionId,
+						sap_context->chan_freq);
+
+				if (first_p2p_go_vdev_id <
+				    WLAN_UMAC_VDEV_ID_MAX) {
+					sap_set_forcescc_required(
+							first_p2p_go_vdev_id);
+					goto validation_done;
+				}
+			}
+		} else {
+			goto validation_done;
+		}
+	}
 
 	concurrent_state = policy_mgr_get_concurrency_mode(mac_ctx->psoc);
 	if (policy_mgr_concurrent_beaconing_sessions_running(mac_ctx->psoc) ||
@@ -1811,6 +1886,12 @@ QDF_STATUS sap_signal_hdd_event(struct sap_context *sap_ctx,
 
 		qdf_copy_macaddr(&reassoc_complete->staMac,
 				 &csr_roaminfo->peerMac);
+#ifdef WLAN_FEATURE_11BE_MLO
+		qdf_copy_macaddr(&reassoc_complete->sta_mld,
+				 &csr_roaminfo->peer_mld);
+		sap_debug("reassoc_complete->staMld: " QDF_MAC_ADDR_FMT,
+			  QDF_MAC_ADDR_REF(reassoc_complete->sta_mld.bytes));
+#endif
 		reassoc_complete->staId = csr_roaminfo->staId;
 		reassoc_complete->status_code = csr_roaminfo->status_code;
 
@@ -3315,6 +3396,8 @@ sapconvert_to_csr_profile(struct sap_config *config, eCsrRoamBssType bssType,
 		profile->extended_rates.numRates =
 			config->extended_rates.numRates;
 	}
+
+	profile->require_h2e = config->require_h2e;
 
 	qdf_status = ucfg_mlme_get_sap_chan_switch_rate_enabled(
 					mac_ctx->psoc,

@@ -600,11 +600,6 @@ dp_monitor_get_rx_status(struct dp_pdev *pdev)
 	return NULL;
 }
 
-static inline bool dp_monitor_is_enable_enhanced_stats(struct dp_pdev *pdev)
-{
-	return false;
-}
-
 static inline
 void dp_monitor_pdev_config_scan_spcl_vap(struct dp_pdev *pdev)
 {
@@ -2272,8 +2267,20 @@ void dp_vdev_peer_stats_update_protocol_cnt_tx(struct dp_vdev *vdev_hdl,
 
 #ifdef QCA_LL_TX_FLOW_CONTROL_V2
 void dp_tx_dump_flow_pool_info(struct cdp_soc_t *soc_hdl);
+
+/**
+ * dp_tx_dump_flow_pool_info_compact() - dump flow pool info
+ * @soc: DP soc context
+ *
+ * Return: none
+ */
+void dp_tx_dump_flow_pool_info_compact(struct dp_soc *soc);
 int dp_tx_delete_flow_pool(struct dp_soc *soc, struct dp_tx_desc_pool_s *pool,
 	bool force);
+#else
+static inline void dp_tx_dump_flow_pool_info_compact(struct dp_soc *soc)
+{
+}
 #endif /* QCA_LL_TX_FLOW_CONTROL_V2 */
 
 #ifdef QCA_OL_DP_SRNG_LOCK_LESS_ACCESS
@@ -2411,6 +2418,14 @@ void dp_pdev_print_delay_stats(struct dp_pdev *pdev);
  * Return:void
  */
 void dp_pdev_print_tid_stats(struct dp_pdev *pdev);
+
+/**
+ * dp_pdev_print_rx_error_stats(): Print pdev level rx error stats
+ * @pdev: DP_PDEV handle
+ *
+ * Return:void
+ */
+void dp_pdev_print_rx_error_stats(struct dp_pdev *pdev);
 #endif /* CONFIG_WIN */
 
 void dp_soc_set_txrx_ring_map(struct dp_soc *soc);

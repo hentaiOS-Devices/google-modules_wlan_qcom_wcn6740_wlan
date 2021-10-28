@@ -495,6 +495,15 @@ static void lim_process_hw_mode_trans_ind(struct mac_context *mac, void *body)
 			ind->vdev_mac_map[i].mac_id;
 	}
 
+	param->num_freq_map = ind->num_freq_map;
+	for (i = 0; i < param->num_freq_map; i++) {
+		param->mac_freq_map[i].pdev_id =
+			ind->mac_freq_map[i].pdev_id;
+		param->mac_freq_map[i].start_freq =
+			ind->mac_freq_map[i].start_freq;
+		param->mac_freq_map[i].end_freq =
+			ind->mac_freq_map[i].end_freq;
+	}
 	/* TODO: Update this HW mode info in any UMAC params, if needed */
 
 	msg.type = eWNI_SME_HW_MODE_TRANS_IND;
@@ -2101,6 +2110,9 @@ static void lim_process_messages(struct mac_context *mac_ctx,
 		break;
 	case CM_PREAUTH_REQ:
 		cm_process_preauth_req(msg);
+		break;
+	case CM_ABORT_CONN_TIMER:
+		lim_deactivate_timers_for_vdev(mac_ctx, msg->bodyval);
 		break;
 	default:
 		qdf_mem_free((void *)msg->bodyptr);

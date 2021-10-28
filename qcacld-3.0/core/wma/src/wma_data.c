@@ -2274,6 +2274,7 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 			 wma_tx_dwnld_comp_callback tx_frm_download_comp_cb,
 			 void *pData,
 			 wma_tx_ota_comp_callback tx_frm_ota_comp_cb,
+			 struct mgmt_frame_data *ota_comp_data,
 			 uint8_t tx_flag, uint8_t vdev_id, bool tdls_flag,
 			 uint16_t channel_freq, enum rateid rid,
 			 int8_t peer_rssi)
@@ -2604,6 +2605,13 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 		} else {
 			tx_frm_index =
 				GENERIC_NODOWNLD_NOACK_COMP_INDEX;
+		}
+
+		if (ota_comp_data) {
+			wma_handle->is_mgmt_data_valid = true;
+			wma_handle->mgmt_data = *ota_comp_data;
+		} else {
+			wma_handle->is_mgmt_data_valid = false;
 		}
 	}
 
@@ -3166,8 +3174,16 @@ int wma_dp_send_delba_ind(uint8_t vdev_id, uint8_t *peer_macaddr,
 bool wma_is_roam_in_progress(uint32_t vdev_id)
 {
 	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+	enum QDF_OPMODE opmode;
+
+	if (!wma_is_vdev_valid(vdev_id))
+		return false;
 
 	if (!wma || !wma->interfaces[vdev_id].vdev)
+		return false;
+
+	opmode = wlan_vdev_mlme_get_opmode(wma->interfaces[vdev_id].vdev);
+	if (opmode != QDF_STA_MODE && opmode != QDF_P2P_CLIENT_MODE)
 		return false;
 
 	return wlan_cm_is_vdev_roaming(wma->interfaces[vdev_id].vdev);
