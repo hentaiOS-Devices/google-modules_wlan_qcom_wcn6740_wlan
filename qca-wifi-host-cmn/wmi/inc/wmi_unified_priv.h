@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -396,7 +397,6 @@ QDF_STATUS
 (*extract_roam_frame_info)(wmi_unified_t wmi_handle, void *evt_buf,
 			   struct roam_frame_info *dst, uint8_t idx,
 			   uint8_t num_frames);
-#ifdef ROAM_TARGET_IF_CONVERGENCE
 /**
  * extract_roam_sync_event  - Extract roam sync event func ptr
  * @wmi_handle: WMI handle
@@ -447,7 +447,15 @@ QDF_STATUS
 (*extract_roam_pmkid_request)(wmi_unified_t wmi_handle,
 			      uint8_t *event, uint32_t data_len,
 			      struct roam_pmkid_req_event **list);
-#endif /* ROAM_TARGET_IF_CONVERGENCE */
+QDF_STATUS
+(*extract_roam_candidate_frame)(wmi_unified_t wmi_handle,
+				uint8_t *event, uint32_t data_len,
+				struct roam_scan_candidate_frame *data);
+#endif
+#ifdef FEATURE_MEC_OFFLOAD
+QDF_STATUS
+(*send_pdev_set_mec_timer_cmd)(struct wmi_unified *wmi_handle,
+			       struct set_mec_timer_params *param);
 #endif
 QDF_STATUS (*send_vdev_create_cmd)(wmi_unified_t wmi_handle,
 				 uint8_t macaddr[QDF_MAC_ADDR_SIZE],
@@ -563,6 +571,9 @@ QDF_STATUS
 
 QDF_STATUS (*send_vdev_set_param_cmd)(wmi_unified_t wmi_handle,
 				struct vdev_set_params *param);
+
+QDF_STATUS (*send_vdev_set_mu_snif_cmd)(wmi_unified_t wmi_handle,
+					struct vdev_set_mu_snif_param *param);
 
 QDF_STATUS (*send_vdev_sifs_trigger_cmd)(wmi_unified_t wmi_handle,
 					 struct sifs_trigger_param *param);
@@ -957,7 +968,8 @@ QDF_STATUS (*send_wow_delete_pattern_cmd)(wmi_unified_t wmi_handle,
 					  uint8_t ptrn_id,
 					  uint8_t vdev_id);
 
-QDF_STATUS (*send_host_wakeup_ind_to_fw_cmd)(wmi_unified_t wmi_handle);
+QDF_STATUS (*send_host_wakeup_ind_to_fw_cmd)(wmi_unified_t wmi_handle,
+					     bool tx_pending_ind);
 
 QDF_STATUS (*send_wow_timer_pattern_cmd)(wmi_unified_t wmi_handle,
 			uint8_t vdev_id, uint32_t cookie, uint32_t time);
@@ -984,6 +996,11 @@ QDF_STATUS (*send_enable_disable_packet_filter_cmd)(wmi_unified_t wmi_handle,
 QDF_STATUS (*send_config_packet_filter_cmd)(wmi_unified_t wmi_handle,
 		uint8_t vdev_id, struct pmo_rcv_pkt_fltr_cfg *rcv_filter_param,
 		uint8_t filter_id, bool enable);
+#endif
+
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+QDF_STATUS (*send_icmp_offload_config_cmd)(wmi_unified_t wmi_handle,
+			   struct pmo_icmp_offload *pmo_icmp_req);
 #endif
 #endif /* end of WLAN_POWER_MANAGEMENT_OFFLOAD */
 #ifdef WLAN_WMI_BCN
@@ -1083,6 +1100,9 @@ QDF_STATUS (*send_pdev_set_pcl_cmd)(wmi_unified_t wmi_handle,
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
 QDF_STATUS (*send_vdev_set_pcl_cmd)(wmi_unified_t wmi_handle,
 				    struct set_pcl_cmd_params *params);
+
+QDF_STATUS (*send_roam_set_param_cmd)(wmi_unified_t wmi_handle,
+				      struct vdev_set_params *roam_param);
 #endif
 
 #ifdef WLAN_POLICY_MGR_ENABLE
@@ -1238,6 +1258,14 @@ QDF_STATUS (*send_set_bwf_cmd)(wmi_unified_t wmi_handle,
 
 QDF_STATUS (*send_pdev_fips_cmd)(wmi_unified_t wmi_handle,
 		struct fips_params *param);
+
+#ifdef WLAN_FEATURE_FIPS_BER_CCMGCM
+QDF_STATUS (*send_pdev_fips_extend_cmd)(wmi_unified_t wmi_handle,
+					struct fips_extend_params *param);
+
+QDF_STATUS (*send_pdev_fips_mode_set_cmd)(wmi_unified_t wmi_handle,
+					  struct fips_mode_set_params *param);
+#endif
 
 QDF_STATUS (*send_wlan_profile_enable_cmd)(wmi_unified_t wmi_handle,
 		struct wlan_profile_params *param);
@@ -1750,6 +1778,14 @@ QDF_STATUS (*extract_dcs_awgn_info)(
 QDF_STATUS (*extract_fips_event_data)(wmi_unified_t wmi_handle,
 	void *evt_buf, struct wmi_host_fips_event_param *param);
 
+#ifdef WLAN_FEATURE_FIPS_BER_CCMGCM
+QDF_STATUS
+(*extract_fips_extend_ev_data)(wmi_unified_t wmi_handle,
+			       void *evt_buf,
+			       struct wmi_host_fips_extend_event_param
+			       *param);
+#endif
+
 #ifdef WLAN_FEATURE_DISA
 QDF_STATUS
 (*extract_encrypt_decrypt_resp_event)(wmi_unified_t wmi_handle,
@@ -2028,6 +2064,10 @@ QDF_STATUS (*extract_service_ready_ext2)(
 			wmi_unified_t wmi_handle,
 			uint8_t *evt_buf,
 			struct wlan_psoc_host_service_ext2_param *param);
+
+QDF_STATUS (*extract_dbs_or_sbs_service_ready_ext2)(
+			wmi_unified_t wmi_handle, uint8_t *event,
+			uint32_t *sbs_lower_band_end_freq);
 
 QDF_STATUS (*extract_hw_mode_cap_service_ready_ext)(
 			wmi_unified_t wmi_handle,
@@ -2643,6 +2683,10 @@ QDF_STATUS (*send_lcr_cmd)(wmi_unified_t wmi_handle,
 			   struct wmi_wifi_pos_lcr_info *lcr_info);
 QDF_STATUS (*send_lci_cmd)(wmi_unified_t wmi_handle,
 			   struct wifi_pos_lci_info *lci_info);
+#if !defined(CNSS_GENL) && defined(WLAN_RTT_MEASUREMENT_NOTIFICATION)
+QDF_STATUS (*extract_measreq_chan_info)(uint32_t data_len, uint8_t *data,
+					struct rtt_channel_info *chinfo);
+#endif
 
 #ifdef WLAN_SUPPORT_MESH_LATENCY
 QDF_STATUS (*config_vdev_tid_latency_info_cmd)(
@@ -2729,6 +2773,20 @@ QDF_STATUS
 (*extract_mlo_teardown_cmpl_event)(wmi_unified_t wmi_handle,
 				   uint8_t *buf,
 				   struct wmi_mlo_teardown_cmpl_params *param);
+QDF_STATUS
+(*send_mlo_link_set_active_cmd)(wmi_unified_t wmi_handle,
+				struct wmi_mlo_link_set_active_param *param);
+
+QDF_STATUS
+(*extract_mlo_link_set_active_resp)(wmi_unified_t wmi_handle,
+				    void *evt_buf,
+				    struct wmi_mlo_link_set_active_resp *resp);
+#endif
+
+#ifdef WLAN_FEATURE_SON
+QDF_STATUS
+(*extract_inst_rssi_stats_resp)(wmi_unified_t wmi_handle, void *evt_buf,
+			struct wmi_host_inst_rssi_stats_resp *inst_rssi_resp);
 #endif
 };
 
@@ -2867,7 +2925,8 @@ struct wmi_soc {
 	uint16_t max_msg_len[WMI_MAX_RADIOS];
 	struct wmi_ops *ops;
 	const uint32_t *svc_ids;
-#ifdef WLAN_FEATURE_WMI_DIAG_OVER_CE7
+#if defined(WLAN_FEATURE_WMI_DIAG_OVER_CE7) || \
+	defined(WLAN_DIAG_AND_DBR_OVER_SEPARATE_CE)
 	HTC_ENDPOINT_ID wmi_diag_endpoint_id;
 #endif
 	uint32_t wmi_events[wmi_events_max];

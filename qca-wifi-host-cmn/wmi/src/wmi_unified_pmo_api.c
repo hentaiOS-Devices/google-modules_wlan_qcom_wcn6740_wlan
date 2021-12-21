@@ -308,10 +308,13 @@ QDF_STATUS wmi_unified_wow_delete_pattern_cmd(wmi_unified_t wmi_handle,
 	return QDF_STATUS_E_FAILURE;
 }
 
-QDF_STATUS wmi_unified_host_wakeup_ind_to_fw_cmd(wmi_unified_t wmi_handle)
+QDF_STATUS wmi_unified_host_wakeup_ind_to_fw_cmd(wmi_unified_t wmi_handle,
+						 bool tx_pending_ind)
 {
 	if (wmi_handle->ops->send_host_wakeup_ind_to_fw_cmd)
-		return wmi_handle->ops->send_host_wakeup_ind_to_fw_cmd(wmi_handle);
+		return wmi_handle->ops->send_host_wakeup_ind_to_fw_cmd
+						(wmi_handle,
+						 tx_pending_ind);
 
 	return QDF_STATUS_E_FAILURE;
 }
@@ -361,3 +364,14 @@ QDF_STATUS wmi_unified_app_type1_params_in_fw_cmd(
 }
 #endif /* WLAN_FEATURE_EXTWOW_SUPPORT */
 
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+QDF_STATUS wmi_unified_config_icmp_offload_cmd(wmi_unified_t wmi_handle,
+			struct pmo_icmp_offload *pmo_icmp_req)
+{
+	if (wmi_handle->ops->send_icmp_offload_config_cmd)
+		return wmi_handle->ops->send_icmp_offload_config_cmd(
+				wmi_handle, pmo_icmp_req);
+
+	return QDF_STATUS_E_FAILURE;
+}
+#endif

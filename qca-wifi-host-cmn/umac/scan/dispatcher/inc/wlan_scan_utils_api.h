@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -737,6 +738,9 @@ util_scan_copy_beacon_data(struct scan_cache_entry *new_entry,
 	/* This macro will be removed once 11be is enabled */
 	ie_lst->ehtcap = conv_ptr(ie_lst->ehtcap, old_ptr, new_ptr);
 	ie_lst->ehtop = conv_ptr(ie_lst->ehtop, old_ptr, new_ptr);
+#endif
+#ifdef WLAN_FEATURE_11BE_MLO
+	ie_lst->multi_link = conv_ptr(ie_lst->multi_link, old_ptr, new_ptr);
 #endif
 
 	return QDF_STATUS_SUCCESS;
@@ -1810,4 +1814,20 @@ static inline bool util_scan_is_null_ssid(struct wlan_ssid *ssid)
 	return false;
 }
 
+/**
+ * util_scan_get_6g_oper_channel() - function to get primary channel
+ * from he op IE
+ * he_op_ie : ie pointer
+ *
+ * Return : primary channel or 0 if 6g params is not present.
+ */
+#ifdef CONFIG_BAND_6GHZ
+uint8_t util_scan_get_6g_oper_channel(uint8_t *he_op_ie);
+#else
+static inline uint8_t
+util_scan_get_6g_oper_channel(uint8_t *he_op_ie)
+{
+	return 0;
+}
+#endif
 #endif

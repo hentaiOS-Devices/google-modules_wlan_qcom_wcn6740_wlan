@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -483,6 +484,11 @@ struct wlan_lmac_if_mlme_tx_ops {
 				enum wlan_vdev_mgr_tgt_if_rsp_bit clear_bit);
 #if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_MLO_MULTI_CHIP)
 	uint16_t (*get_hw_link_id)(struct wlan_objmgr_pdev *pdev);
+	QDF_STATUS (*target_if_mlo_setup_req)(struct wlan_objmgr_pdev **pdev,
+					      uint8_t num_pdevs,
+					      uint8_t grp_id);
+	QDF_STATUS (*target_if_mlo_ready)(struct wlan_objmgr_pdev **pdev,
+					  uint8_t num_pdevs);
 #endif
 };
 
@@ -818,6 +824,8 @@ struct wlan_lmac_if_iot_sim_tx_ops {
  * @wifi_pos_convert_pdev_id_target_to_host: function pointer to get host
  * pdev_id from target pdev_id.
  * @wifi_pos_get_vht_ch_width: Function pointer to get max supported bw by FW
+ * @wifi_pos_parse_measreq_chan_info: Parse channel info from LOWI measurement
+ *                                    request buffer.
  */
 struct wlan_lmac_if_wifi_pos_tx_ops {
 	QDF_STATUS (*data_req_tx)(struct wlan_objmgr_pdev *pdev,
@@ -832,6 +840,10 @@ struct wlan_lmac_if_wifi_pos_tx_ops {
 			uint32_t *host_pdev_id);
 	QDF_STATUS (*wifi_pos_get_vht_ch_width)(struct wlan_objmgr_psoc *psoc,
 						enum phy_ch_width *ch_width);
+	QDF_STATUS (*wifi_pos_parse_measreq_chan_info)(
+			struct wlan_objmgr_pdev *pdev, uint32_t data_len,
+			uint8_t *data, struct rtt_channel_info *chinfo);
+
 };
 #endif
 
@@ -1028,6 +1040,10 @@ struct wlan_lmac_if_reg_tx_ops {
  * @dfs_ocac_abort_cmd:                 Send Off-Channel CAC abort command.
  * @dfs_is_pdev_5ghz:                   Check if the given pdev is 5GHz.
  * @dfs_set_phyerr_filter_offload:      Config phyerr filter offload.
+ * @dfs_is_tgt_radar_found_chan_freq_eq_center_freq:
+ *                                      Check if chan_freq parameter of the
+ *                                      radar found wmi event points to channel
+ *                                      center.
  * @dfs_send_offload_enable_cmd:        Send dfs offload enable command to fw.
  * @dfs_host_dfs_check_support:         To check Host DFS confirmation feature
  *                                      support.
@@ -1075,6 +1091,8 @@ struct wlan_lmac_if_dfs_tx_ops {
 			struct wlan_objmgr_pdev *pdev,
 			bool dfs_phyerr_filter_offload);
 	bool (*dfs_is_tgt_offload)(struct wlan_objmgr_psoc *psoc);
+	bool (*dfs_is_tgt_radar_found_chan_freq_eq_center_freq)
+		 (struct wlan_objmgr_psoc *psoc);
 	QDF_STATUS (*dfs_send_offload_enable_cmd)(
 			struct wlan_objmgr_pdev *pdev,
 			bool enable);
@@ -1836,6 +1854,7 @@ struct wlan_lmac_if_dfs_rx_ops {
 						uint8_t ic_vhtop_ch_freq_seg2,
 						uint16_t dfs_ch_mhz_freq_seg1,
 						uint16_t dfs_ch_mhz_freq_seg2,
+						uint16_t dfs_ch_punc_pattern,
 						bool *is_channel_updated);
 #endif
 #ifdef DFS_COMPONENT_ENABLE

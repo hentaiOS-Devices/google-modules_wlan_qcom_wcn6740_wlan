@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -543,7 +544,9 @@ void sap_dfs_set_current_channel(void *ctx)
 		return;
 	}
 
-	is_dfs = wlan_reg_is_dfs_for_freq(pdev, sap_ctx->chan_freq);
+	is_dfs = wlan_mlme_check_chan_param_has_dfs(pdev,
+						    &sap_ctx->ch_params,
+						    sap_ctx->chan_freq);
 
 	sap_debug("freq=%d, dfs %d seg0=%d, seg1=%d, bw %d",
 		  sap_ctx->chan_freq, is_dfs, vht_seg0, vht_seg1,
@@ -566,6 +569,7 @@ void sap_dfs_set_current_channel(void *ctx)
 			tgt_dfs_get_radars(pdev);
 		}
 		tgt_dfs_set_phyerr_filter_offload(pdev);
+
 		if (mac_ctx->mlme_cfg->dfs_cfg.dfs_disable_channel_switch)
 			tgt_dfs_control(pdev, DFS_SET_USENOL, &use_nol,
 					sizeof(uint32_t), NULL, NULL, &error);
@@ -828,9 +832,64 @@ static void sap_set_forcescc_required(uint8_t vdev_id)
 		}
 	}
 }
+
+/**
+ * sap_process_liberal_scc_for_go - based on existing connections this
+ * function decides current go should start on provided channel or not and
+ * sets force scc required bit for existing GO.
+ *
+ * sap_context: sap_context
+ *
+ * Return: bool
+ */
+static bool sap_process_liberal_scc_for_go(struct sap_context *sap_context)
+{
+	uint8_t existing_vdev_id = WLAN_UMAC_VDEV_ID_MAX;
+	enum policy_mgr_con_mode existing_vdev_mode = PM_MAX_NUM_OF_MODE;
+	uint32_t con_freq;
+	enum phy_ch_width ch_width;
+	struct mac_context *mac_ctx;
+	mac_handle_t mac_handle;
+
+	mac_handle = cds_get_context(QDF_MODULE_ID_SME);
+	mac_ctx = MAC_CONTEXT(mac_handle);
+	if (!mac_ctx) {
+		sap_alert("invalid MAC handle");
+		return true;
+	}
+
+	existing_vdev_id =
+		policy_mgr_fetch_existing_con_info(
+				mac_ctx->psoc,
+				sap_context->sessionId,
+				sap_context->chan_freq,
+				&existing_vdev_mode,
+				&con_freq, &ch_width);
+
+	if (existing_vdev_id <
+			WLAN_UMAC_VDEV_ID_MAX &&
+			existing_vdev_mode == PM_P2P_GO_MODE) {
+		sap_debug("set forcescc flag for go vdev: %d",
+			  existing_vdev_id);
+		sap_set_forcescc_required(
+				existing_vdev_id);
+		return true;
+	}
+	if (existing_vdev_id < WLAN_UMAC_VDEV_ID_MAX &&
+	    (existing_vdev_mode == PM_STA_MODE ||
+	    existing_vdev_mode == PM_P2P_CLIENT_MODE)) {
+		sap_debug("don't override channel, start go on %d",
+			  sap_context->chan_freq);
+		return true;
+	}
+
+	return false;
+}
 #else
-static void sap_set_forcescc_required(uint8_t vdev_id)
-{}
+static bool sap_process_liberal_scc_for_go(struct sap_context *sap_context)
+{
+	return false;
+}
 #endif
 
 QDF_STATUS
@@ -849,7 +908,7 @@ sap_validate_chan(struct sap_context *sap_context,
 	bool go_force_scc;
 	struct ch_params ch_params;
 	bool is_go_scc_strict = false;
-	uint8_t first_p2p_go_vdev_id = WLAN_UMAC_VDEV_ID_MAX;
+	bool start_sap_on_provided_freq = false;
 
 	mac_handle = cds_get_context(QDF_MODULE_ID_SME);
 	mac_ctx = MAC_CONTEXT(mac_handle);
@@ -868,35 +927,32 @@ sap_validate_chan(struct sap_context *sap_context,
 	    sap_context->vdev->vdev_mlme.vdev_opmode == QDF_P2P_GO_MODE) {
 	       /*
 		* check whether go_force_scc is enabled or not.
-		* If it not enabled then don't any force scc on existing and new
-		* p2p go vdevs.
+		* If it not enabled then don't any force scc on existing go and
+		* new p2p go vdevs.
 		* Otherwise, if it is enabled then check whether it's in strict
 		* mode or liberal mode.
-		* For strict mode, do force scc on newly p2p go to existing p2p
-		* go channel.
-		* For liberal mode, first form new p2p go on requested channel.
-		* Once set key is done, do force scc on existing p2p go to new
-		* p2p go channel.
+		* For strict mode, do force scc on newly p2p go to existing vdev
+		* channel.
+		* For liberal first form new p2p go on requested channel and
+		* follow below rules:
+		* a.) If Existing vdev mode is P2P GO Once set key is done, do
+		* force scc for existing p2p go and move that go to new p2p
+		* go's channel.
+		*
+		* b.) If Existing vdev mode is P2P CLI/STA Once set key is
+		* done, do force scc for p2p go and move go to cli/sta channel.
 		*/
 		go_force_scc = policy_mgr_go_scc_enforced(mac_ctx->psoc);
-		sap_debug("go force scc value %d", go_force_scc);
+		sap_debug("go force scc enabled %d", go_force_scc);
 		if (go_force_scc) {
 			is_go_scc_strict =
 				policy_mgr_is_go_scc_strict(mac_ctx->psoc);
 			if (!is_go_scc_strict) {
 				sap_debug("liberal mode is enabled");
-				first_p2p_go_vdev_id =
-					policy_mgr_check_forcescc_for_other_go(
-						mac_ctx->psoc,
-						sap_context->sessionId,
-						sap_context->chan_freq);
-
-				if (first_p2p_go_vdev_id <
-				    WLAN_UMAC_VDEV_ID_MAX) {
-					sap_set_forcescc_required(
-							first_p2p_go_vdev_id);
+				start_sap_on_provided_freq =
+				sap_process_liberal_scc_for_go(sap_context);
+				if (start_sap_on_provided_freq)
 					goto validation_done;
-				}
 			}
 		} else {
 			goto validation_done;
@@ -921,7 +977,8 @@ sap_validate_chan(struct sap_context *sap_context,
 					mac_handle,
 					sap_context->chan_freq,
 					sap_context->phyMode,
-					sap_context->cc_switch_mode);
+					sap_context->cc_switch_mode,
+					sap_context->sessionId);
 			sap_debug("After check overlap: sap freq %d con freq:%d",
 				  sap_context->chan_freq, con_ch_freq);
 			ch_params = sap_context->ch_params;
@@ -1713,6 +1770,78 @@ sap_update_cac_history(struct mac_context *mac_ctx,
 }
 #endif
 
+#ifdef WLAN_FEATURE_11BE_MLO
+static inline
+bool sap_check_peer_for_peer_null_mldaddr(struct wlan_objmgr_peer *peer)
+{
+	if (qdf_is_macaddr_zero((struct qdf_mac_addr *)peer->mldaddr))
+		return true;
+	else
+		return false;
+}
+#else
+static inline
+bool sap_check_peer_for_peer_null_mldaddr(struct wlan_objmgr_peer *peer)
+{
+	return true;
+}
+#endif
+
+static
+QDF_STATUS sap_populate_peer_assoc_info(struct mac_context *mac_ctx,
+					struct csr_roam_info *csr_roaminfo,
+					struct sap_event *sap_ap_event)
+{
+	struct wlan_objmgr_peer *peer;
+	tSap_StationAssocReassocCompleteEvent *reassoc_complete;
+
+	reassoc_complete =
+		&sap_ap_event->sapevt.sapStationAssocReassocCompleteEvent;
+
+	peer = wlan_objmgr_get_peer_by_mac(mac_ctx->psoc,
+					   csr_roaminfo->peerMac.bytes,
+					   WLAN_LEGACY_MAC_ID);
+	if (!peer) {
+		sap_err("Peer object not found");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	sap_debug("mlo peer assoc:%d", wlan_peer_mlme_is_assoc_peer(peer));
+
+	if (sap_check_peer_for_peer_null_mldaddr(peer) ||
+	    wlan_peer_mlme_is_assoc_peer(peer)) {
+		if (csr_roaminfo->assocReqLength < ASSOC_REQ_IE_OFFSET) {
+			sap_err("Invalid assoc request length:%d",
+				csr_roaminfo->assocReqLength);
+			wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
+			return QDF_STATUS_E_INVAL;
+		}
+		reassoc_complete->ies_len = (csr_roaminfo->assocReqLength -
+					    ASSOC_REQ_IE_OFFSET);
+		reassoc_complete->ies = (csr_roaminfo->assocReqPtr +
+					 ASSOC_REQ_IE_OFFSET);
+		/* skip current AP address in reassoc frame */
+		if (csr_roaminfo->fReassocReq) {
+			reassoc_complete->ies_len -= QDF_MAC_ADDR_SIZE;
+			reassoc_complete->ies += QDF_MAC_ADDR_SIZE;
+		}
+	}
+
+	if (csr_roaminfo->addIELen) {
+		if (wlan_get_vendor_ie_ptr_from_oui(
+		    SIR_MAC_P2P_OUI, SIR_MAC_P2P_OUI_SIZE,
+		    csr_roaminfo->paddIE, csr_roaminfo->addIELen)) {
+			reassoc_complete->staType = eSTA_TYPE_P2P_CLI;
+		} else {
+			reassoc_complete->staType = eSTA_TYPE_INFRA;
+		}
+	}
+
+	wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
+
+	return QDF_STATUS_SUCCESS;
+}
+
 /**
  * sap_signal_hdd_event() - send event notification
  * @sap_ctx: Sap Context
@@ -1876,6 +2005,13 @@ QDF_STATUS sap_signal_hdd_event(struct sap_context *sap_ctx,
 			return QDF_STATUS_E_ABORTED;
 		}
 
+		qdf_status = sap_populate_peer_assoc_info(mac_ctx, csr_roaminfo,
+							  sap_ap_event);
+		if (QDF_IS_STATUS_ERROR(qdf_status)) {
+			qdf_mem_free(sap_ap_event);
+			return QDF_STATUS_E_INVAL;
+		}
+
 		reassoc_complete =
 		    &sap_ap_event->sapevt.sapStationAssocReassocCompleteEvent;
 
@@ -1894,33 +2030,6 @@ QDF_STATUS sap_signal_hdd_event(struct sap_context *sap_ctx,
 #endif
 		reassoc_complete->staId = csr_roaminfo->staId;
 		reassoc_complete->status_code = csr_roaminfo->status_code;
-
-		if (csr_roaminfo->assocReqLength < ASSOC_REQ_IE_OFFSET) {
-			sap_err("Invalid assoc request length:%d",
-				 csr_roaminfo->assocReqLength);
-			qdf_mem_free(sap_ap_event);
-			return QDF_STATUS_E_INVAL;
-		}
-		reassoc_complete->ies_len = (csr_roaminfo->assocReqLength -
-					    ASSOC_REQ_IE_OFFSET);
-		reassoc_complete->ies = (csr_roaminfo->assocReqPtr +
-					 ASSOC_REQ_IE_OFFSET);
-
-		/* skip current AP address in reassoc frame */
-		if (csr_roaminfo->fReassocReq) {
-			reassoc_complete->ies_len -= QDF_MAC_ADDR_SIZE;
-			reassoc_complete->ies += QDF_MAC_ADDR_SIZE;
-		}
-
-		if (csr_roaminfo->addIELen) {
-			if (wlan_get_vendor_ie_ptr_from_oui(
-			    SIR_MAC_P2P_OUI, SIR_MAC_P2P_OUI_SIZE,
-			    csr_roaminfo->paddIE, csr_roaminfo->addIELen)) {
-				reassoc_complete->staType = eSTA_TYPE_P2P_CLI;
-			} else {
-				reassoc_complete->staType = eSTA_TYPE_INFRA;
-			}
-		}
 
 		/* also fill up the channel info from the csr_roamInfo */
 		chaninfo = &reassoc_complete->chan_info;

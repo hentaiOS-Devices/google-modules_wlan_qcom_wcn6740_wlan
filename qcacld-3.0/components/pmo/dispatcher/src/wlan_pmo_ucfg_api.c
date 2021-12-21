@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -34,6 +35,7 @@
 #include "wlan_pmo_cfg.h"
 #include "wlan_pmo_static_config.h"
 #include "cfg_ucfg_api.h"
+#include "wlan_pmo_icmp.h"
 
 QDF_STATUS ucfg_pmo_psoc_open(struct wlan_objmgr_psoc *psoc)
 {
@@ -193,6 +195,38 @@ ucfg_pmo_disable_ns_offload_in_fwr(struct wlan_objmgr_vdev *vdev,
 	return pmo_core_disable_ns_offload_in_fwr(vdev, trigger);
 }
 #endif /* WLAN_NS_OFFLOAD */
+
+#ifdef FEATURE_WLAN_DYNAMIC_ARP_NS_OFFLOAD
+QDF_STATUS
+ucfg_pmo_dynamic_arp_ns_offload_enable(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_dynamic_arp_ns_offload_enable(vdev);
+}
+
+QDF_STATUS
+ucfg_pmo_dynamic_arp_ns_offload_disable(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_dynamic_arp_ns_offload_disable(vdev);
+}
+
+bool
+ucfg_pmo_get_arp_ns_offload_dynamic_disable(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_get_dynamic_arp_ns_offload_disable(vdev);
+}
+
+void
+ucfg_pmo_dynamic_arp_ns_offload_runtime_prevent(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_dynamic_arp_ns_offload_runtime_prevent(vdev);
+}
+
+void
+ucfg_pmo_dynamic_arp_ns_offload_runtime_allow(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_dynamic_arp_ns_offload_runtime_allow(vdev);
+}
+#endif
 
 QDF_STATUS
 ucfg_pmo_get_ns_offload_params(struct wlan_objmgr_vdev *vdev,
@@ -947,14 +981,6 @@ ucfg_pmo_get_suspend_mode(struct wlan_objmgr_psoc *psoc)
 	return pmo_psoc_ctx->psoc_cfg.suspend_mode;
 }
 
-bool
-ucfg_pmo_get_dynamic_pcie_gen_switch_cfg(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.is_dynamic_pcie_gen_speed_change_enabled;
-}
-
 QDF_STATUS ucfg_pmo_core_txrx_suspend(struct wlan_objmgr_psoc *psoc)
 {
 	return pmo_core_txrx_suspend(psoc);
@@ -1000,3 +1026,25 @@ ucfg_pmo_get_disconnect_sap_tdls_in_wow(struct wlan_objmgr_psoc *psoc)
 
 	return pmo_psoc_ctx->psoc_cfg.disconnect_sap_tdls_in_wow;
 }
+
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+QDF_STATUS ucfg_pmo_check_icmp_offload(struct wlan_objmgr_psoc *psoc,
+				       uint8_t vdev_id)
+{
+	return pmo_core_icmp_check_offload(psoc, vdev_id);
+}
+
+bool
+ucfg_pmo_is_icmp_offload_enabled(struct wlan_objmgr_psoc *psoc)
+{
+	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
+
+	return pmo_psoc_ctx->psoc_cfg.is_icmp_offload_enable;
+}
+
+QDF_STATUS ucfg_pmo_config_icmp_offload(struct wlan_objmgr_psoc *psoc,
+					struct pmo_icmp_offload *pmo_icmp_req)
+{
+	return pmo_tgt_config_icmp_offload_req(psoc, pmo_icmp_req);
+}
+#endif

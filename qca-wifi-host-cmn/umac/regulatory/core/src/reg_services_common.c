@@ -4141,6 +4141,48 @@ update_bw:
 	}
 }
 
+#ifdef CONFIG_REG_CLIENT
+static qdf_freq_t reg_get_sec_ch_2g_freq(struct wlan_objmgr_pdev *pdev,
+					 qdf_freq_t primary_freq)
+{
+	qdf_freq_t sec_ch_2g_freq = 0;
+
+	if (primary_freq >= TWOG_CHAN_1_IN_MHZ &&
+	    primary_freq <= TWOG_CHAN_5_IN_MHZ)
+		sec_ch_2g_freq = primary_freq + HT40_SEC_OFFSET;
+	else if (primary_freq >= TWOG_CHAN_6_IN_MHZ &&
+		 primary_freq <= TWOG_CHAN_13_IN_MHZ)
+		sec_ch_2g_freq = primary_freq - HT40_SEC_OFFSET;
+
+	return sec_ch_2g_freq;
+}
+#else
+static qdf_freq_t reg_get_sec_ch_2g_freq(struct wlan_objmgr_pdev *pdev,
+					 qdf_freq_t primary_freq)
+{
+	qdf_freq_t sec_ch_2g_freq;
+
+	if (primary_freq < TWOG_CHAN_1_IN_MHZ ||
+	    primary_freq > TWOG_CHAN_13_IN_MHZ)
+		return 0;
+
+	sec_ch_2g_freq = primary_freq + HT40_SEC_OFFSET;
+
+	/* For 2G primary frequencies > 2452 (IEEE9), return HT40-. */
+	if (primary_freq > TWOG_CHAN_9_IN_MHZ)
+		sec_ch_2g_freq = primary_freq - HT40_SEC_OFFSET;
+
+	/*
+	 * For 2G primary frequencies <= 2452 (IEEE9), return HT40+ if
+	 * the secondary is available, else return HT40-.
+	 */
+	else if (!reg_is_freq_present_in_cur_chan_list(pdev, sec_ch_2g_freq))
+		sec_ch_2g_freq = primary_freq - HT40_SEC_OFFSET;
+
+	return sec_ch_2g_freq;
+}
+#endif
+
 void reg_set_2g_channel_params_for_freq(struct wlan_objmgr_pdev *pdev,
 					uint16_t oper_freq,
 					struct ch_params *ch_params,
@@ -4165,14 +4207,8 @@ void reg_set_2g_channel_params_for_freq(struct wlan_objmgr_pdev *pdev,
 
 	if (ch_params->ch_width >= CH_WIDTH_MAX)
 		ch_params->ch_width = CH_WIDTH_40MHZ;
-	if ((reg_get_bw_value(ch_params->ch_width) > 20) && !sec_ch_2g_freq) {
-		if (oper_freq >= TWOG_CHAN_1_IN_MHZ && oper_freq <=
-				TWOG_CHAN_5_IN_MHZ)
-			sec_ch_2g_freq = oper_freq + 20;
-		else if (oper_freq >= TWOG_CHAN_6_IN_MHZ && oper_freq <=
-				TWOG_CHAN_13_IN_MHZ)
-			sec_ch_2g_freq = oper_freq - 20;
-	}
+	if ((reg_get_bw_value(ch_params->ch_width) > 20) && !sec_ch_2g_freq)
+		sec_ch_2g_freq = reg_get_sec_ch_2g_freq(pdev, oper_freq);
 
 	max_bw = pdev_priv_obj->cur_chan_list[chan_enum].max_bw;
 
@@ -4886,6 +4922,12 @@ reg_get_reg_rules_for_pdev(struct wlan_objmgr_pdev *pdev)
 
 	psoc = wlan_pdev_get_psoc(pdev);
 	psoc_reg_priv = reg_get_psoc_obj(psoc);
+
+	if (!psoc_reg_priv) {
+		reg_debug("Regulatory psoc private object is NULL");
+		return NULL;
+	}
+
 	phy_id = wlan_objmgr_pdev_get_pdev_id(pdev);
 	psoc_reg_rules = &psoc_reg_priv->mas_chan_params[phy_id].reg_rules;
 
@@ -5009,6 +5051,12 @@ static void reg_iterate_sp_rules(struct wlan_objmgr_pdev *pdev,
 	struct freq_range chip_range;
 
 	psoc_reg_rules = reg_get_reg_rules_for_pdev(pdev);
+
+	if (!psoc_reg_rules) {
+		reg_debug("psoc reg rule pointer is NULL");
+		return;
+	}
+
 	n_6g_sp_ap_reg_rules = psoc_reg_rules->num_of_6g_ap_reg_rules[REG_STANDARD_POWER_AP];
 	p_sp_reg_rule = psoc_reg_rules->reg_rules_6g_ap[REG_STANDARD_POWER_AP];
 
@@ -5577,6 +5625,9 @@ QDF_STATUS reg_afc_start(struct wlan_objmgr_pdev *pdev, uint64_t req_id)
 		return QDF_STATUS_E_FAILURE;
 	}
 
+	QDF_TRACE(QDF_MODULE_ID_AFC, QDF_TRACE_LEVEL_DEBUG,
+		  "Processing AFC Start/Renew Expiry event");
+
 	reg_dmn_set_afc_req_id(afc_req, req_id);
 
 	reg_print_partial_afc_req_info(pdev, afc_req);
@@ -5867,6 +5918,11 @@ reg_get_num_rules_of_ap_pwr_type(struct wlan_objmgr_pdev *pdev,
 {
 	struct reg_rule_info *psoc_reg_rules = reg_get_reg_rules_for_pdev(pdev);
 
+	if (!psoc_reg_rules) {
+		reg_debug("No psoc_reg_rules");
+		return 0;
+	}
+
 	if (ap_pwr_type > REG_MAX_SUPP_AP_TYPE) {
 		reg_err("Unsupported 6G AP power type");
 		return 0;
@@ -5886,6 +5942,9 @@ QDF_STATUS reg_set_ap_pwr_and_update_chan_list(struct wlan_objmgr_pdev *pdev,
 		reg_err("pdev reg component is NULL");
 		return QDF_STATUS_E_INVAL;
 	}
+
+	if (pdev_priv_obj->reg_cur_6g_ap_pwr_type == ap_pwr_type)
+		return QDF_STATUS_SUCCESS;
 
 	if (!reg_get_num_rules_of_ap_pwr_type(pdev, ap_pwr_type))
 		return QDF_STATUS_E_FAILURE;

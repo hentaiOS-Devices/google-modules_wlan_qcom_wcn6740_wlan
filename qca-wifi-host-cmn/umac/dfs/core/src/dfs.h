@@ -714,6 +714,7 @@ struct dfs_filtertype {
  * @dfs_ch_mhz_freq_seg2:       Channel center frequency of secondary segment
  *                              in MHZ applicable only for 80+80MHZ mode of
  *                              operation.
+ * @dfs_ch_punc_pattern:        Bitmap representing puncturing patterns.
  */
 struct dfs_channel {
 	uint16_t       dfs_ch_freq;
@@ -724,6 +725,16 @@ struct dfs_channel {
 	uint8_t        dfs_ch_vhtop_ch_freq_seg2;
 	uint16_t       dfs_ch_mhz_freq_seg1;
 	uint16_t       dfs_ch_mhz_freq_seg2;
+#ifdef WLAN_FEATURE_11BE
+	/* If the bitmap is all 0 then nothing is punctured. If any bit is 1
+	 * then corresponding 20MHz sub-channel is puntured. For example, for
+	 * channel 100 (BW 240MHz), it will treated as a 320MHz channel and the
+	 * bit-map will be b1111_0000_0000_0000 (where the most significant bit
+	 * indicates the rightmost sub20channel and the least significant bit
+	 * indicates the leftmost sub20channel).
+	 */
+	uint16_t       dfs_ch_punc_pattern;
+#endif
 };
 
 /**
@@ -1056,6 +1067,9 @@ struct dfs_rcac_params {
  * @dfs_cac_started_chan:            CAC started channel.
  * @dfs_pdev_obj:                    DFS pdev object.
  * @dfs_is_offload_enabled:          Set if DFS offload enabled.
+ * @dfs_is_radar_found_chan_freq_eq_center_freq:
+ *                                   Set if chan_freq parameter of the radar
+ *                                   found wmi event indicates channel center.
  * @dfs_agile_precac_freq_mhz:       Freq in MHZ configured on Agile DFS engine.
  * @dfs_use_nol:                     Use the NOL when radar found(default: TRUE)
  * @dfs_nol_lock:                    Lock to protect nol list.
@@ -1247,6 +1261,7 @@ struct wlan_dfs {
 	uint16_t       dfs_agile_precac_freq_mhz;
 #endif
 	bool           dfs_is_offload_enabled;
+	bool           dfs_is_radar_found_chan_freq_eq_center_freq;
 	int            dfs_use_nol;
 	qdf_spinlock_t dfs_nol_lock;
 	uint16_t tx_leakage_threshold;
@@ -2580,6 +2595,7 @@ static inline bool dfs_is_en302_502_applicable(struct wlan_dfs *dfs)
  * @dfs_chan_mhz_freq_seg1: Channel center frequency of primary segment in MHZ.
  * @dfs_chan_mhz_freq_seg2: Channel center frequency of secondary segment in MHZ
  *                          applicable only for 80+80MHZ mode of operation.
+ * @dfs_chan_op_puncture_bitmap: Static channel puncturing of current channel.
  * @is_channel_updated: boolean to represent channel update.
  */
 void dfs_set_current_channel_for_freq(struct wlan_dfs *dfs,
@@ -2591,8 +2607,8 @@ void dfs_set_current_channel_for_freq(struct wlan_dfs *dfs,
 				      uint8_t dfs_chan_vhtop_freq_seg2,
 				      uint16_t dfs_chan_mhz_freq_seg1,
 				      uint16_t dfs_chan_mhz_freq_seg2,
+				      uint16_t dfs_chan_op_puncture_bitmap,
 				      bool *is_channel_updated);
-
 #endif
 /**
  * dfs_get_nol_chfreq_and_chwidth() - Get channel freq and width from NOL list.

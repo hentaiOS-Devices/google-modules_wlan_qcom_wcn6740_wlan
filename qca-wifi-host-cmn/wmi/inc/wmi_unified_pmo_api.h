@@ -330,13 +330,15 @@ QDF_STATUS wmi_unified_wow_delete_pattern_cmd(wmi_unified_t wmi_handle,
 /**
  * wmi_unified_host_wakeup_ind_to_fw_cmd() - send wakeup ind to fw
  * @wmi_handle: wmi handle
+ * @tx_pending_ind: flag of TX has pending frames
  *
  * Sends host wakeup indication to FW. On receiving this indication,
  * FW will come out of WOW.
  *
  * Return: QDF_STATUS_SUCCESS on success and QDF_STATUS_E_FAILURE for failure
  */
-QDF_STATUS wmi_unified_host_wakeup_ind_to_fw_cmd(wmi_unified_t wmi_handle);
+QDF_STATUS wmi_unified_host_wakeup_ind_to_fw_cmd(wmi_unified_t wmi_handle,
+						 bool tx_pending_ind);
 
 /**
  * wmi_unified_wow_timer_pattern_cmd() - set timer pattern tlv, so that
@@ -398,5 +400,20 @@ QDF_STATUS wmi_unified_app_type1_params_in_fw_cmd(
 QDF_STATUS
 wmi_unified_send_igmp_offload_cmd(wmi_unified_t wmi_handle,
 				  struct pmo_igmp_offload_req *pmo_igmp_req);
+#endif
+
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+/**
+ * wmi_unified_config_icmp_offload_cmd() - enable ICMP offload
+ * @wmi_hdl: wmi handle
+ * @pmo_icmp_req: icmp offload request
+ *
+ * To configure ICMP offload data to firmware
+ * when target goes to wow mode.
+ *
+ * Return: QDF_STATUS_SUCCESS on success and QDF_STATUS_E_FAILURE for failure
+ */
+QDF_STATUS wmi_unified_config_icmp_offload_cmd(wmi_unified_t wmi_handle,
+			struct pmo_icmp_offload *pmo_icmp_req);
 #endif
 #endif /* _WMI_UNIFIED_PMO_API_H_ */

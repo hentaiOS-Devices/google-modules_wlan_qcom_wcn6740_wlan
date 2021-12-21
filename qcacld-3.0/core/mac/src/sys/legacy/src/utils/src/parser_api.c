@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1301,8 +1302,12 @@ populate_dot11f_vht_caps(struct mac_context *mac,
 			return QDF_STATUS_SUCCESS;
 		}
 
-		if (wlan_reg_is_24ghz_ch_freq(pe_session->curr_op_freq))
+		if (wlan_reg_is_24ghz_ch_freq(pe_session->curr_op_freq)) {
 			pDot11f->supportedChannelWidthSet = 0;
+		} else {
+			if (pe_session->ch_width <= CH_WIDTH_80MHZ)
+				pDot11f->supportedChannelWidthSet = 0;
+		}
 
 		if (pe_session->ht_config.adv_coding_cap)
 			pDot11f->ldpcCodingCap =
@@ -2974,6 +2979,11 @@ QDF_STATUS sir_convert_probe_frame2_struct(struct mac_context *mac,
 			     sizeof(tDot11fIEhe_op));
 	}
 
+	if (pr->eht_cap.present) {
+		qdf_mem_copy(&pProbeResp->eht_cap, &pr->eht_cap,
+			     sizeof(tDot11fIEeht_cap));
+	}
+
 	update_bss_color_change_ie_from_probe_rsp(pr, pProbeResp);
 	sir_convert_mlo_probe_rsp_frame2_struct(pr, &pProbeResp->mlo_ie);
 
@@ -3750,6 +3760,8 @@ sir_convert_reassoc_req_frame2_struct(struct mac_context *mac,
 {
 	tDot11fReAssocRequest *ar;
 	uint32_t status;
+	int i;
+	struct mlo_link_info *info;
 
 	ar = qdf_mem_malloc(sizeof(*ar));
 	if (!ar)
@@ -3932,6 +3944,30 @@ sir_convert_reassoc_req_frame2_struct(struct mac_context *mac,
 		qdf_mem_copy(&pAssocReq->he_6ghz_band_cap,
 			     &ar->he_6ghz_band_cap,
 			     sizeof(tDot11fIEhe_6ghz_band_cap));
+	}
+
+	if (ar->eht_cap.present) {
+		qdf_mem_copy(&pAssocReq->eht_cap, &ar->eht_cap,
+			     sizeof(tDot11fIEeht_cap));
+		pe_debug("Received Assoc Req with EHT Capability IE");
+		QDF_TRACE_HEX_DUMP(QDF_MODULE_ID_PE, QDF_TRACE_LEVEL_DEBUG,
+				   &pAssocReq->eht_cap,
+				   sizeof(tDot11fIEeht_cap));
+	}
+	if (ar->mlo_ie.present) {
+		pAssocReq->mlo_info.num_partner_links =
+					ar->mlo_ie.num_sta_profile;
+		for (i = 0; i < ar->mlo_ie.num_sta_profile; i++) {
+			info = &pAssocReq->mlo_info.partner_link_info[i];
+			info->link_id = ar->mlo_ie.sta_profile[i].link_id;
+			qdf_mem_copy(
+				&info->link_addr,
+				&ar->mlo_ie.sta_profile[i].sta_mac_addr.info,
+				sizeof(info->link_addr));
+		}
+		qdf_mem_copy(pAssocReq->mld_mac,
+			     ar->mlo_ie.mld_mac_addr.info.mld_mac_addr,
+			     QDF_MAC_ADDR_SIZE);
 	}
 
 	qdf_mem_free(ar);
@@ -4394,6 +4430,8 @@ sir_parse_beacon_ie(struct mac_context *mac,
 		pBeaconStruct->wmeEdcaPresent = 1;
 		convert_wmm_params(mac, &pBeaconStruct->edcaParams,
 				   &pBies->WMMParams);
+		qdf_mem_copy(&pBeaconStruct->wmm_params, &pBies->WMMParams,
+			     sizeof(tDot11fIEWMMParams));
 	}
 
 	if (pBies->WMMInfoAp.present) {
@@ -4499,6 +4537,11 @@ sir_parse_beacon_ie(struct mac_context *mac,
 	if (pBies->he_op.present) {
 		qdf_mem_copy(&pBeaconStruct->he_op, &pBies->he_op,
 			     sizeof(tDot11fIEhe_op));
+	}
+
+	if (pBies->eht_cap.present) {
+		qdf_mem_copy(&pBeaconStruct->eht_cap, &pBies->eht_cap,
+			     sizeof(tDot11fIEeht_cap));
 	}
 
 	update_bss_color_change_from_beacon_ies(pBies, pBeaconStruct);
@@ -6557,6 +6600,16 @@ QDF_STATUS populate_dot11f_he_caps(struct mac_context *mac_ctx, struct pe_sessio
 	}
 	populate_dot11f_twt_he_cap(mac_ctx, session, he_cap);
 
+	if (wlan_reg_is_5ghz_ch_freq(session->curr_op_freq) ||
+	    wlan_reg_is_6ghz_chan_freq(session->curr_op_freq)) {
+		if (session->ch_width <= CH_WIDTH_80MHZ) {
+			he_cap->chan_width_2 = 0;
+			he_cap->chan_width_3 = 0;
+		} else if (session->ch_width == CH_WIDTH_160MHZ) {
+			he_cap->chan_width_3 = 0;
+		}
+	}
+
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -7897,13 +7950,16 @@ QDF_STATUS wlan_parse_bss_description_ies(struct mac_context *mac_ctx,
 {
 	int ie_len = wlan_get_ielen_from_bss_description(bss_desc);
 
-	if (ie_len <= 0 || !ie_struct)
+	if (ie_len <= 0 || !ie_struct) {
+		pe_err("BSS description has invalid IE : %d", ie_len);
 		return QDF_STATUS_E_FAILURE;
-
+	}
 	if (DOT11F_FAILED(dot11f_unpack_beacon_i_es
 			  (mac_ctx, (uint8_t *)bss_desc->ieFields,
-			  ie_len, ie_struct, false)))
+			  ie_len, ie_struct, false))) {
+		pe_err("Beacon IE parsing failed");
 		return QDF_STATUS_E_FAILURE;
+	}
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -8455,6 +8511,11 @@ static void wlan_update_bss_with_fils_data(struct mac_context *mac_ctx,
 	qdf_mem_copy(bss_descr->fils_info_element.realm,
 			fils_ind->realm_identifier.realm,
 			bss_descr->fils_info_element.realm_cnt * SIR_REALM_LEN);
+	pe_debug("FILS: bssid:" QDF_MAC_ADDR_FMT "is_present:%d cache_id[0x%x%x]",
+		 QDF_MAC_ADDR_REF(bss_descr->bssId),
+		 fils_ind->cache_identifier.is_present,
+		 fils_ind->cache_identifier.identifier[0],
+		 fils_ind->cache_identifier.identifier[1]);
 	if (fils_ind->cache_identifier.is_present) {
 		bss_descr->fils_info_element.is_cache_id_present = true;
 		qdf_mem_copy(bss_descr->fils_info_element.cache_id,

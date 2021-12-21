@@ -3284,7 +3284,7 @@ wma_peer_phymode(tSirNwType nw_type, uint8_t sta_type,
 			phymode = WLAN_PHYMODE_11A;
 			break;
 		}
-#ifdef WLAN_FEATURE_11BE
+#if defined(WLAN_FEATURE_11BE)
 		if (is_eht) {
 			if (ch_width == CH_WIDTH_160MHZ)
 				phymode = WLAN_PHYMODE_11BEA_EHT160;
@@ -4331,28 +4331,6 @@ QDF_STATUS wma_sta_mlme_vdev_start_continue(struct vdev_mlme_obj *vdev_mlme,
 
 	return QDF_STATUS_SUCCESS;
 }
-
-#ifndef ROAM_TARGET_IF_CONVERGENCE
-QDF_STATUS wma_sta_mlme_vdev_roam_notify(struct vdev_mlme_obj *vdev_mlme,
-					 uint16_t data_len, void *data)
-{
-	tp_wma_handle wma;
-	int ret;
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
-
-	wma = cds_get_context(QDF_MODULE_ID_WMA);
-	if (!wma)
-		return QDF_STATUS_E_INVAL;
-
-	ret = wma_mlme_roam_synch_event_handler_cb(wma, data, data_len);
-	if (ret != 0) {
-		wma_err("Failed to process roam synch event");
-		status = QDF_STATUS_E_FAILURE;
-	}
-
-	return status;
-}
-#endif
 
 QDF_STATUS wma_ap_mlme_vdev_start_continue(struct vdev_mlme_obj *vdev_mlme,
 					   uint16_t data_len, void *data)

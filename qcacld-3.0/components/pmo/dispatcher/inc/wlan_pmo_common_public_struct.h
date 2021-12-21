@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -174,11 +175,13 @@ enum powersave_mode {
  * @PMO_SUSPEND_NONE: Does not support suspend
  * @PMO_SUSPEND_LEGENCY: Legency PDEV suspend mode
  * @PMO_SUSPEND_WOW: WoW suspend mode
+ * @PMO_FULL_POWER_DOWN: Full power down while suspend
  */
 enum pmo_suspend_mode {
 	PMO_SUSPEND_NONE = 0,
 	PMO_SUSPEND_LEGENCY,
-	PMO_SUSPEND_WOW
+	PMO_SUSPEND_WOW,
+	PMO_FULL_POWER_DOWN
 };
 
 #define PMO_TARGET_SUSPEND_TIMEOUT   (4000)
@@ -219,6 +222,7 @@ typedef QDF_STATUS(*pmo_psoc_resume_handler)
  * @pmo_ns_offload_dynamic_update: enable/disable ns offload on the fly
  * @pmo_peer_disconnect: trigger is peer disconnect
  * @pmo_mcbc_setting_dynamic_update: mcbc value update on the fly
+ * @pmo_arp_ns_offload_dynamic_update: enable/disable arp/ns offload on the fly
  *
  * @pmo_offload_trigger_max: Max trigger value
  */
@@ -233,6 +237,7 @@ enum pmo_offload_trigger {
 	pmo_ns_offload_dynamic_update,
 	pmo_peer_disconnect,
 	pmo_mcbc_setting_dynamic_update,
+	pmo_arp_ns_offload_dynamic_update,
 
 	pmo_offload_trigger_max,
 };
@@ -284,6 +289,30 @@ enum pmo_gpio_wakeup_mode {
 	PMO_GPIO_WAKEUP_MODE_HIGH,
 	PMO_GPIO_WAKEUP_MODE_LOW,
 };
+
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+#define ICMP_MAX_IPV6_ADDRESS 16
+
+/**
+ * pmo_icmp_offload - structure to hold icmp param
+ *
+ * @vdev_id: vdev id
+ * @enable: enable/disable
+ * @trigger: icmp offload trigger information
+ * @ipv6_count: number of host ipv6 address
+ * @ipv4_addr: host interface ipv4 address
+ * @ipv6_addr: array of host ipv6 address
+ *
+ **/
+struct pmo_icmp_offload {
+	uint8_t vdev_id;
+	bool enable;
+	enum pmo_offload_trigger trigger;
+	uint8_t ipv6_count;
+	uint8_t ipv4_addr[QDF_IPV4_ADDR_SIZE];
+	uint8_t ipv6_addr[ICMP_MAX_IPV6_ADDRESS][QDF_IPV6_ADDR_SIZE];
+};
+#endif
 
 /**
  * struct pmo_psoc_cfg - user configuration required for pmo
@@ -418,7 +447,6 @@ struct pmo_psoc_cfg {
 	bool is_mod_dtim_on_sys_suspend_enabled;
 	bool is_bus_suspend_enabled_in_sap_mode;
 	bool is_bus_suspend_enabled_in_go_mode;
-	bool is_dynamic_pcie_gen_speed_change_enabled;
 #ifdef WLAN_ENABLE_GPIO_WAKEUP
 	bool enable_gpio_wakeup;
 	uint32_t gpio_wakeup_pin;
@@ -429,7 +457,9 @@ struct pmo_psoc_cfg {
 	bool igmp_offload_enable;
 #endif
 	bool disconnect_sap_tdls_in_wow;
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
 	bool is_icmp_offload_enable;
+#endif
 };
 
 /**

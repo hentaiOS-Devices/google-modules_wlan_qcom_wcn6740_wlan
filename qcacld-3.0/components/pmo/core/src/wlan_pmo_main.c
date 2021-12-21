@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -26,6 +27,7 @@
 #include "cfg_ucfg_api.h"
 #include "wlan_fwol_ucfg_api.h"
 #include "wlan_ipa_obj_mgmt_api.h"
+#include "wlan_pmo_icmp.h"
 
 static struct wlan_pmo_ctx *gp_pmo_ctx;
 
@@ -218,6 +220,21 @@ wlan_pmo_get_igmp_offload_enable_cfg(struct wlan_objmgr_psoc *psoc,
 {}
 #endif
 
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+static void
+wlan_pmo_get_icmp_offload_enable_cfg(struct wlan_objmgr_psoc *psoc,
+				     struct pmo_psoc_cfg *psoc_cfg)
+{
+	psoc_cfg->is_icmp_offload_enable =
+			cfg_get(psoc, CFG_ENABLE_ICMP_OFFLOAD);
+}
+#else
+static inline void
+wlan_pmo_get_icmp_offload_enable_cfg(struct wlan_objmgr_psoc *psoc,
+				     struct pmo_psoc_cfg *psoc_cfg)
+{}
+#endif
+
 static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 			      struct pmo_psoc_cfg *psoc_cfg)
 {
@@ -246,8 +263,6 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 		psoc_cfg->is_bus_suspend_enabled_in_sap_mode = 0;
 		psoc_cfg->is_bus_suspend_enabled_in_go_mode = 0;
 	}
-	psoc_cfg->is_dynamic_pcie_gen_speed_change_enabled =
-		cfg_get(psoc, CFG_ENABLE_DYNAMIC_PCIE_GEN_SPEED_SWITCH);
 	psoc_cfg->default_power_save_mode = psoc_cfg->power_save_mode;
 	psoc_cfg->max_ps_poll = cfg_get(psoc, CFG_PMO_MAX_PS_POLL);
 
@@ -275,8 +290,7 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 	wlan_pmo_get_igmp_offload_enable_cfg(psoc, psoc_cfg);
 	psoc_cfg->disconnect_sap_tdls_in_wow =
 			cfg_get(psoc, CFG_DISCONNECT_SAP_TDLS_IN_WOW);
-	psoc_cfg->is_icmp_offload_enable =
-			cfg_get(psoc, CFG_ENABLE_ICMP_OFFLOAD);
+	wlan_pmo_get_icmp_offload_enable_cfg(psoc, psoc_cfg);
 }
 
 QDF_STATUS pmo_psoc_open(struct wlan_objmgr_psoc *psoc)

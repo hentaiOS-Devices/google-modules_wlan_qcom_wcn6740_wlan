@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -518,6 +519,11 @@ struct sap_config {
 	struct hdd_channel_info *channel_info;
 	uint32_t channel_info_count;
 	bool dfs_cac_offload;
+#ifdef WLAN_FEATURE_11BE_MLO
+	bool mlo_sap;
+	uint8_t link_id;
+	uint8_t num_link;
+#endif
 };
 
 #ifdef FEATURE_WLAN_AP_AP_ACS_OPTIMIZE
@@ -1693,6 +1699,20 @@ static inline qdf_freq_t wlansap_dcs_get_freq(struct sap_context *sap_context)
 	return 0;
 }
 #endif
+
+/**
+ * wlansap_filter_vendor_unsafe_ch_freq() - filter sap acs ch list by
+ *  vendor unsafe ch freq ranges
+ * @sap_context: sap context
+ * @sap_config: sap conifg
+ *
+ * This function is used to filter out unsafe channel frequency from acs
+ * channel frequency list based on vendor unsafe channel frequency ranges.
+ *
+ * Return: true if vendor unsafe ch range is present, otherwise false
+ */
+bool wlansap_filter_vendor_unsafe_ch_freq(
+	struct sap_context *sap_context, struct sap_config *sap_config);
 
 /**
  * wlansap_dump_acs_ch_freq() - print acs channel frequency

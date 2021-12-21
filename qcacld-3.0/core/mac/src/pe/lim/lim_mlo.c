@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -283,13 +284,42 @@ void lim_mlo_notify_peer_disconn(struct pe_session *pe_session,
 		return;
 	}
 
-	if (lim_is_mlo_conn(pe_session, sta_ds)) {
+	if (wlan_peer_mlme_flag_ext_get(peer, WLAN_PEER_FEXT_MLO)) {
 		if (wlan_vdev_mlme_is_mlo_ap(pe_session->vdev))
 			lim_mlo_update_cleanup_trigger(
 					pe_session, sta_ds,
 					sta_ds->mlmStaContext.cleanupTrigger);
 		wlan_mlo_partner_peer_disconnect_notify(peer);
 	}
+
+	wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
+}
+
+void lim_mlo_sta_notify_peer_disconn(struct pe_session *pe_session)
+{
+	struct wlan_objmgr_peer *peer;
+	struct mac_context *mac_ctx;
+
+	if (!pe_session) {
+		pe_err("pe session is null");
+		return;
+	}
+	mac_ctx = pe_session->mac_ctx;
+	if (!mac_ctx) {
+		pe_err("mac context is null");
+		return;
+	}
+
+	peer = wlan_objmgr_get_peer_by_mac(mac_ctx->psoc,
+					   pe_session->bssId,
+					   WLAN_LEGACY_MAC_ID);
+	if (!peer) {
+		pe_err("peer is null");
+		return;
+	}
+
+	if (wlan_peer_mlme_flag_ext_get(peer, WLAN_PEER_FEXT_MLO))
+		wlan_mlo_partner_peer_disconnect_notify(peer);
 
 	wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
 }
@@ -352,18 +382,23 @@ void lim_mlo_set_mld_mac_peer(tpDphHashNode sta_ds,
 
 bool lim_is_mlo_conn(struct pe_session *session, tpDphHashNode sta_ds)
 {
+	bool mlo_conn = false;
+
 	if (!sta_ds) {
 		pe_err("sta ds is null");
-		return false;
+		return mlo_conn;
 	}
 
 	if (!session) {
 		pe_err("session is null");
-		return false;
+		return mlo_conn;
 	}
 
-	return sta_ds->mlmStaContext.eht_capable &&
-	       IS_DOT11_MODE_EHT(session->dot11mode);
+	if (wlan_vdev_mlme_is_mlo_vdev(session->vdev) &&
+	    !qdf_is_macaddr_zero((struct qdf_mac_addr *)sta_ds->mld_addr))
+		mlo_conn = true;
+
+	return mlo_conn;
 }
 
 void lim_set_mlo_recv_assoc(tpDphHashNode sta_ds, bool mlo_recv_assoc_frm)
@@ -578,7 +613,7 @@ void lim_ap_mlo_sta_peer_ind(struct mac_context *mac,
 			ml_peer = wlan_mlo_get_mlpeer_by_aid(
 					pe_session->vdev->mlo_dev_ctx,
 					sta->assocId);
-			wlan_mlo_link_peer_attach(ml_peer, peer);
+			wlan_mlo_link_peer_attach(ml_peer, peer, NULL);
 		}
 		wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
 	} else {

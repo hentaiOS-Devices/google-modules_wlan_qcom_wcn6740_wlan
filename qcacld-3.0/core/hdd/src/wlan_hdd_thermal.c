@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -50,6 +51,9 @@ const struct nla_policy
 		[QCA_WLAN_VENDOR_ATTR_THERMAL_CMD_VALUE] = {.type = NLA_U32},
 		[QCA_WLAN_VENDOR_ATTR_THERMAL_LEVEL] = {
 						.type = NLA_U32},
+		[QCA_WLAN_VENDOR_ATTR_THERMAL_COMPLETION_WINDOW] = {
+						.type = NLA_U32},
+		[QCA_WLAN_VENDOR_ATTR_THERMAL_STATS] = {.type = NLA_NESTED},
 };
 
 #ifdef FEATURE_WPSS_THERMAL_MITIGATION
@@ -595,7 +599,7 @@ QDF_STATUS hdd_restore_thermal_mitigation_config(struct hdd_context *hdd_ctx)
 	uint32_t prio = 0, target_temp = 0;
 	struct wlan_fwol_thermal_temp thermal_temp = {0};
 	QDF_STATUS status;
-	struct thermal_mitigation_params therm_cfg_params;
+	struct thermal_mitigation_params therm_cfg_params = {0};
 
 	status = ucfg_fwol_get_thermal_temp(hdd_ctx->psoc, &thermal_temp);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -617,6 +621,7 @@ QDF_STATUS hdd_restore_thermal_mitigation_config(struct hdd_context *hdd_ctx)
 	therm_cfg_params.num_thermal_conf = 1;
 	therm_cfg_params.client_id = THERMAL_MONITOR_APPS;
 	therm_cfg_params.priority = 0;
+
 	hdd_debug("dc %d dc_off_per %d enable %d", dc, dc_off_percent, enable);
 
 	status = sme_set_thermal_throttle_cfg(hdd_ctx->mac_handle,

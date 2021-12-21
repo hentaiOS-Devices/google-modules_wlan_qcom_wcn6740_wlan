@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -88,6 +89,8 @@
 #include <linux/igmp.h>
 #include "qdf_types.h"
 #include <linux/cpuidle.h>
+#include <cdp_txrx_ctrl.h>
+
 /* Preprocessor definitions and constants */
 #ifdef QCA_WIFI_EMULATION
 #define HDD_SSR_BRING_UP_TIME 3000000
@@ -571,11 +574,23 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 	ns_req->trigger = trigger;
 	ns_req->count = 0;
 
+	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_POWER_ID);
+	if (!vdev) {
+		hdd_err("vdev is NULL");
+		goto free_req;
+	}
+
 	/* check if offload cache and send is required or not */
 	status = ucfg_pmo_ns_offload_check(psoc, trigger, adapter->vdev_id);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		hdd_debug("NS offload is not required");
-		goto free_req;
+		goto put_vdev;
+	}
+
+	if (ucfg_pmo_get_arp_ns_offload_dynamic_disable(vdev)) {
+		hdd_debug("Dynamic arp ns offload disabled");
+		ucfg_pmo_flush_ns_offload_req(vdev);
+		goto skip_cache_ns;
 	}
 
 	/* Unicast Addresses */
@@ -585,7 +600,7 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 	if (errno) {
 		hdd_disable_ns_offload(adapter, trigger);
 		hdd_debug("Max supported addresses: disabling NS offload");
-		goto free_req;
+		goto put_vdev;
 	}
 
 	/* Anycast Addresses */
@@ -595,21 +610,17 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 	if (errno) {
 		hdd_disable_ns_offload(adapter, trigger);
 		hdd_debug("Max supported addresses: disabling NS offload");
-		goto free_req;
+		goto put_vdev;
 	}
 
 	/* cache ns request */
 	status = ucfg_pmo_cache_ns_offload_req(ns_req);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		hdd_debug("Failed to cache ns request; status:%d", status);
-		goto free_req;
+		goto put_vdev;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_POWER_ID);
-	if (!vdev) {
-		hdd_err("vdev is NULL");
-		goto free_req;
-	}
+skip_cache_ns:
 	/* enable ns request */
 	status = ucfg_pmo_enable_ns_offload_in_fwr(vdev, trigger);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -724,6 +735,7 @@ static void __hdd_ipv6_notifier_work_queue(struct hdd_adapter *adapter)
 		goto exit;
 
 	hdd_enable_ns_offload(adapter, pmo_ipv6_change_notify);
+	hdd_enable_icmp_offload(adapter, pmo_ipv6_change_notify);
 
 	hdd_send_ps_config_to_fw(adapter);
 exit:
@@ -1070,6 +1082,7 @@ static void __hdd_ipv4_notifier_work_queue(struct hdd_adapter *adapter)
 		goto exit;
 
 	hdd_enable_arp_offload(adapter, pmo_ipv4_change_notify);
+	hdd_enable_icmp_offload(adapter, pmo_ipv4_change_notify);
 
 	status = ucfg_mlme_get_sta_keepalive_method(hdd_ctx->psoc, &val);
 	if (QDF_IS_STATUS_ERROR(status))
@@ -1311,6 +1324,12 @@ void hdd_enable_arp_offload(struct hdd_adapter *adapter,
 		goto put_vdev;
 	}
 
+	if (ucfg_pmo_get_arp_ns_offload_dynamic_disable(vdev)) {
+		hdd_debug("Dynamic arp ns offload disabled");
+		ucfg_pmo_flush_arp_offload_req(vdev);
+		goto skip_cache_arp;
+	}
+
 	ifa = hdd_get_ipv4_local_interface(adapter);
 	if (!ifa || !ifa->ifa_local) {
 		hdd_info("IP Address is not assigned");
@@ -1326,6 +1345,7 @@ void hdd_enable_arp_offload(struct hdd_adapter *adapter,
 		goto put_vdev;
 	}
 
+skip_cache_arp:
 	status = ucfg_pmo_enable_arp_offload_in_fwr(vdev, trigger);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		hdd_err("failed arp offload config in fw; status:%d", status);
@@ -1339,6 +1359,161 @@ put_vdev:
 free_req:
 	qdf_mem_free(arp_req);
 }
+
+#ifdef WLAN_FEATURE_ICMP_OFFLOAD
+/**
+ * hdd_fill_ipv4_addr() - fill IPv4 addresses
+ * @adapter: Adapter context for which ICMP offload is to be configured
+ * @pmo_icmp_req: pointer to ICMP offload request params
+ *
+ * This is the IPv4 utility function to populate address.
+ *
+ * Return: 0 on success, error number otherwise.
+ */
+static int hdd_fill_ipv4_addr(struct hdd_adapter *adapter,
+			      struct pmo_icmp_offload *pmo_icmp_req)
+{
+	struct in_ifaddr *ifa;
+	uint8_t ipv4_addr_array[QDF_IPV4_ADDR_SIZE];
+	int i;
+
+	ifa = hdd_get_ipv4_local_interface(adapter);
+	if (!ifa || !ifa->ifa_local) {
+		hdd_debug("IP Address is not assigned");
+		return -EINVAL;
+	}
+
+	/* converting u32 to IPv4 address */
+	for (i = 0; i < QDF_IPV4_ADDR_SIZE; i++)
+		ipv4_addr_array[i] = (ifa->ifa_local >> i * 8) & 0xff;
+
+	qdf_mem_copy(pmo_icmp_req->ipv4_addr, &ipv4_addr_array,
+		     QDF_IPV4_ADDR_SIZE);
+
+	return 0;
+}
+
+/**
+ * hdd_fill_ipv6_addr() - fill IPv6 addresses
+ * @adapter: Adapter context for which ICMP offload is to be configured
+ * @pmo_icmp_req: pointer to ICMP offload request params
+ *
+ * This is the IPv6 utility function to populate addresses.
+ *
+ * Return: 0 on success, error number otherwise.
+ */
+static int hdd_fill_ipv6_addr(struct hdd_adapter *adapter,
+			      struct pmo_icmp_offload *pmo_icmp_req)
+{
+	struct inet6_dev *in6_dev;
+	struct pmo_ns_req *ns_req;
+	int i, errno;
+
+	in6_dev = __in6_dev_get(adapter->dev);
+	if (!in6_dev) {
+		hdd_err_rl("IPv6 dev does not exist");
+		return -EINVAL;
+	}
+
+	ns_req = qdf_mem_malloc(sizeof(*ns_req));
+	if (!ns_req)
+		return -ENOMEM;
+
+	ns_req->count = 0;
+	/* Unicast Addresses */
+	errno = hdd_fill_ipv6_uc_addr(in6_dev, ns_req->ipv6_addr,
+				      ns_req->ipv6_addr_type, ns_req->scope,
+				      &ns_req->count);
+	if (errno) {
+		hdd_debug("Reached Max IPv6 supported address %d",
+			  ns_req->count);
+		goto free_req;
+	}
+	/* Anycast Addresses */
+	errno = hdd_fill_ipv6_ac_addr(in6_dev, ns_req->ipv6_addr,
+				      ns_req->ipv6_addr_type, ns_req->scope,
+				      &ns_req->count);
+	if (errno) {
+		hdd_debug("Reached Max IPv6 supported address %d",
+			  ns_req->count);
+		goto free_req;
+	}
+
+	pmo_icmp_req->ipv6_count = ns_req->count;
+	for (i = 0; i < pmo_icmp_req->ipv6_count; i++) {
+		qdf_mem_copy(&pmo_icmp_req->ipv6_addr[i], &ns_req->ipv6_addr[i],
+			     QDF_IPV6_ADDR_SIZE);
+	}
+
+free_req:
+	qdf_mem_free(ns_req);
+	return errno;
+}
+
+void hdd_enable_icmp_offload(struct hdd_adapter *adapter,
+			     enum pmo_offload_trigger trigger)
+{
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	struct wlan_objmgr_psoc *psoc = hdd_ctx->psoc;
+	struct pmo_icmp_offload *pmo_icmp_req;
+	struct wlan_objmgr_vdev *vdev;
+	bool is_icmp_enable;
+	QDF_STATUS status;
+
+	is_icmp_enable = ucfg_pmo_is_icmp_offload_enabled(psoc);
+	if (!is_icmp_enable) {
+		hdd_debug("ICMP Offload not enabled");
+		return;
+	}
+
+	pmo_icmp_req = qdf_mem_malloc(sizeof(*pmo_icmp_req));
+	if (!pmo_icmp_req)
+		return;
+
+	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_POWER_ID);
+	if (!vdev) {
+		hdd_err("vdev is NULL");
+		goto free_req;
+	}
+
+	status = ucfg_pmo_check_icmp_offload(psoc, adapter->vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto put_vdev;
+
+	pmo_icmp_req->vdev_id = adapter->vdev_id;
+	pmo_icmp_req->enable = is_icmp_enable;
+	pmo_icmp_req->trigger = trigger;
+
+	switch (trigger) {
+	case pmo_ipv4_change_notify:
+		if (hdd_fill_ipv4_addr(adapter, pmo_icmp_req)) {
+			hdd_debug("Unable to populate IPv4 Address");
+			goto put_vdev;
+		}
+		break;
+	case pmo_ipv6_change_notify:
+		if (hdd_fill_ipv6_addr(adapter, pmo_icmp_req)) {
+			hdd_debug("Unable to populate IPv6 Address");
+			goto put_vdev;
+		}
+		break;
+	default:
+		QDF_DEBUG_PANIC("The trigger %d is not supported", trigger);
+		goto put_vdev;
+	}
+
+	status = ucfg_pmo_config_icmp_offload(psoc, pmo_icmp_req);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_err_rl("icmp offload config in fw failed: %d", status);
+		goto put_vdev;
+	}
+
+put_vdev:
+	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_POWER_ID);
+free_req:
+	qdf_mem_free(pmo_icmp_req);
+}
+#endif
 
 void hdd_disable_arp_offload(struct hdd_adapter *adapter,
 		enum pmo_offload_trigger trigger)
@@ -1476,6 +1651,8 @@ hdd_suspend_wlan(void)
 	QDF_STATUS status;
 	struct hdd_adapter *adapter = NULL, *next_adapter = NULL;
 	uint32_t conn_state_mask = 0;
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	cdp_config_param_type val = {0};
 
 	hdd_info("WLAN being suspended by OS");
 
@@ -1507,6 +1684,11 @@ hdd_suspend_wlan(void)
 		if (adapter->device_mode == QDF_STA_MODE)
 			status = hdd_enable_default_pkt_filters(adapter);
 
+		if (adapter->device_mode == QDF_SAP_MODE ||
+		    adapter->device_mode == QDF_P2P_GO_MODE)
+			cdp_txrx_set_vdev_param(soc, adapter->vdev_id,
+						CDP_ENABLE_AP_BRIDGE, val);
+
 		/* Configure supported OffLoads */
 		hdd_enable_host_offloads(adapter, pmo_apps_suspend);
 		hdd_update_conn_state_mask(adapter, &conn_state_mask);
@@ -1537,6 +1719,8 @@ static int hdd_resume_wlan(void)
 	struct hdd_context *hdd_ctx;
 	struct hdd_adapter *adapter, *next_adapter = NULL;
 	QDF_STATUS status;
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	cdp_config_param_type val = {0};
 
 	hdd_info("WLAN being resumed by OS");
 
@@ -1574,6 +1758,13 @@ static int hdd_resume_wlan(void)
 
 		if (adapter->device_mode == QDF_STA_MODE)
 			status = hdd_disable_default_pkt_filters(adapter);
+
+		if (adapter->device_mode == QDF_SAP_MODE ||
+		    adapter->device_mode == QDF_P2P_GO_MODE) {
+			val.cdp_vdev_param_ap_brdg_en = true;
+			cdp_txrx_set_vdev_param(soc, adapter->vdev_id,
+						CDP_ENABLE_AP_BRIDGE, val);
+		}
 
 		hdd_adapter_dev_put_debug(adapter, NET_DEV_HOLD_RESUME_WLAN);
 	}
@@ -1642,7 +1833,6 @@ QDF_STATUS hdd_wlan_shutdown(void)
 		return QDF_STATUS_E_FAILURE;
 
 	hdd_set_connection_in_progress(false);
-	policy_mgr_clear_concurrent_session_count(hdd_ctx->psoc);
 
 	hdd_debug("Invoking packetdump deregistration API");
 	wlan_deregister_txrx_packetdump(OL_TXRX_PDEV_ID);
@@ -2087,6 +2277,18 @@ hdd_sched_scan_results(struct wiphy *wiphy, uint64_t reqid)
 }
 #endif
 
+#ifdef FEATURE_WLAN_FULL_POWER_DOWN_SUPPORT
+bool wlan_hdd_is_full_power_down_enable(struct hdd_context *hdd_ctx)
+{
+	if (ucfg_pmo_get_suspend_mode(hdd_ctx->psoc) == PMO_FULL_POWER_DOWN) {
+		hdd_info_rl("Wlan full power down is enabled while suspend");
+		return true;
+	}
+
+	return false;
+}
+#endif
+
 /**
  * __wlan_hdd_cfg80211_resume_wlan() - cfg80211 resume callback
  * @wiphy: Pointer to wiphy
@@ -2123,6 +2325,12 @@ static int __wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	if (ucfg_pmo_get_suspend_mode(hdd_ctx->psoc) == PMO_SUSPEND_NONE) {
 		hdd_info_rl("Suspend is not supported");
 		return -EINVAL;
+	}
+
+	if (wlan_hdd_is_full_power_down_enable(hdd_ctx)) {
+		hdd_debug("Driver has been re-initialized; Skipping resume");
+		exit_code = 0;
+		goto exit_with_code;
 	}
 
 	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
@@ -2299,6 +2507,11 @@ static int __wlan_hdd_cfg80211_suspend_wlan(struct wiphy *wiphy,
 	if (ucfg_pmo_get_suspend_mode(hdd_ctx->psoc) == PMO_SUSPEND_NONE) {
 		hdd_info_rl("Suspend is not supported");
 		return -EINVAL;
+	}
+
+	if (wlan_hdd_is_full_power_down_enable(hdd_ctx)) {
+		hdd_debug("Driver will be shutdown; Skipping suspend");
+		return 0;
 	}
 
 	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -146,8 +147,7 @@ cdp_soc_attach_target(ol_txrx_soc_handle soc)
 
 static inline QDF_STATUS
 cdp_vdev_attach(ol_txrx_soc_handle soc, uint8_t pdev_id,
-		uint8_t *vdev_mac_addr, uint8_t vdev_id,
-		enum wlan_op_mode op_mode, enum wlan_op_subtype subtype)
+		struct cdp_vdev_info *vdev_info)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance:");
@@ -159,9 +159,7 @@ cdp_vdev_attach(ol_txrx_soc_handle soc, uint8_t pdev_id,
 	    !soc->ops->cmn_drv_ops->txrx_vdev_attach)
 		return QDF_STATUS_E_FAILURE;
 
-	return soc->ops->cmn_drv_ops->txrx_vdev_attach(soc, pdev_id,
-						       vdev_mac_addr, vdev_id,
-						       op_mode, subtype);
+	return soc->ops->cmn_drv_ops->txrx_vdev_attach(soc, pdev_id, vdev_info);
 }
 
 #ifdef DP_FLOW_CTL
@@ -255,8 +253,7 @@ cdp_pdev_attach_target(ol_txrx_soc_handle soc, uint8_t pdev_id)
 }
 
 static inline QDF_STATUS cdp_pdev_attach
-	(ol_txrx_soc_handle soc, HTC_HANDLE htc_pdev, qdf_device_t osdev,
-	 uint8_t pdev_id)
+	(ol_txrx_soc_handle soc, struct cdp_pdev_attach_params *params)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance:");
@@ -268,8 +265,7 @@ static inline QDF_STATUS cdp_pdev_attach
 	    !soc->ops->cmn_drv_ops->txrx_pdev_attach)
 		return QDF_STATUS_E_FAILURE;
 
-	return soc->ops->cmn_drv_ops->txrx_pdev_attach(soc, htc_pdev, osdev,
-						       pdev_id);
+	return soc->ops->cmn_drv_ops->txrx_pdev_attach(soc, params);
 }
 
 /**
@@ -373,11 +369,12 @@ static inline QDF_STATUS cdp_peer_create
 		return QDF_STATUS_E_FAILURE;
 
 	return soc->ops->cmn_drv_ops->txrx_peer_create(soc, vdev_id,
-			peer_mac_addr);
+			peer_mac_addr, CDP_LINK_PEER_TYPE);
 }
 
 static inline void cdp_peer_setup
-	(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac)
+	(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac,
+	 struct cdp_peer_setup_info *setup_info)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance:");
@@ -390,7 +387,7 @@ static inline void cdp_peer_setup
 		return;
 
 	soc->ops->cmn_drv_ops->txrx_peer_setup(soc, vdev_id,
-			peer_mac);
+			peer_mac, setup_info);
 }
 
 /*
@@ -2672,4 +2669,84 @@ cdp_get_free_desc_poolsize(ol_txrx_soc_handle soc)
 
 	return soc->ops->cmn_drv_ops->get_free_desc_poolsize(soc);
 }
+
+#ifdef WLAN_FEATURE_PKT_CAPTURE_V2
+/**
+ * cdp_set_pkt_capture_mode() - set pkt capture mode in dp ctx
+ * @soc: opaque soc handle
+ * @val: value to be set
+ */
+static inline void
+cdp_set_pkt_capture_mode(ol_txrx_soc_handle soc, bool val)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->set_pkt_capture_mode)
+		return;
+
+	soc->ops->cmn_drv_ops->set_pkt_capture_mode(soc, val);
+}
+#else
+static inline void
+cdp_set_pkt_capture_mode(ol_txrx_soc_handle soc, bool val)
+{
+}
+#endif
+
+/**
+ * cdp_rx_get_pending() - Get number of pending frames of RX threads
+ * @soc: opaque soc handle
+ * Return: number of pending frames
+ */
+static inline uint32_t
+cdp_get_tx_inqueue(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ol_ops ||
+	    !soc->ol_ops->dp_get_tx_inqueue)
+		return 0;
+
+	return soc->ol_ops->dp_get_tx_inqueue(soc);
+}
+
+#ifdef FEATURE_RUNTIME_PM
+
+/**
+ * cdp_set_rtpm_tput_policy_requirement() - Set RTPM throughput policy
+ * @soc: opaque soc handle
+ * @is_high_tput: flag indicating whether throughput requirement is high or not
+ *
+ * The functions sets RTPM throughput policy requirement. If 'is_high_tput' is
+ * set, the expectation is that runtime_pm APIs will not be invoked per packet.
+ */
+
+static inline
+void cdp_set_rtpm_tput_policy_requirement(ol_txrx_soc_handle soc,
+					  bool is_high_tput)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->set_rtpm_tput_policy)
+		return;
+
+	soc->ops->cmn_drv_ops->set_rtpm_tput_policy(soc, is_high_tput);
+}
+#else
+static inline
+void cdp_set_rtpm_tput_policy_requirement(ol_txrx_soc_handle soc,
+					  bool is_high_tput)
+{
+}
+
+#endif /* FEATURE_RUNTIME_PM */
+
 #endif /* _CDP_TXRX_CMN_H_ */

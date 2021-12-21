@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -27,9 +28,7 @@
 #include "../../core/src/wlan_cm_roam_offload.h"
 #include "wlan_mlme_main.h"
 #include "wlan_mlme_api.h"
-
-/* Default value of reason code */
-#define DISABLE_VENDOR_BTM_CONFIG 2
+#include "wlan_reg_ucfg_api.h"
 
 #if defined(WLAN_FEATURE_HOST_ROAM) || defined(WLAN_FEATURE_ROAM_OFFLOAD)
 /**
@@ -60,6 +59,19 @@ wlan_cm_enable_roaming_on_connected_sta(struct wlan_objmgr_pdev *pdev,
 QDF_STATUS wlan_cm_roam_send_rso_cmd(struct wlan_objmgr_psoc *psoc,
 				     uint8_t vdev_id, uint8_t rso_command,
 				     uint8_t reason);
+
+/*
+ * wlan_cm_handle_sta_sta_roaming_enablement() - Handle roaming in case
+ * of STA + STA
+ * @psoc: psoc common object
+ * @vdev_id: Vdev id
+ *
+ * Wrapper function to cm_handle_sta_sta_roaming_enablement
+ *
+ * Return: none
+ */
+void wlan_cm_handle_sta_sta_roaming_enablement(struct wlan_objmgr_psoc *psoc,
+					       uint8_t vdev_id);
 
 /**
  * wlan_cm_roam_state_change() - Post roam state change to roam state machine
@@ -113,6 +125,12 @@ QDF_STATUS wlan_cm_roam_send_rso_cmd(struct wlan_objmgr_psoc *psoc,
 				     uint8_t reason)
 {
 	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline void
+wlan_cm_handle_sta_sta_roaming_enablement(struct wlan_objmgr_psoc *psoc,
+					  uint8_t vdev_id)
+{
 }
 
 static inline QDF_STATUS
@@ -755,12 +773,12 @@ wlan_cm_roam_extract_roam_msg_info(wmi_unified_t wmi, void *evt_buf,
 /**
  * wlan_cm_get_roam_band_value  - Get roam band value from RSO config
  * @psoc: psoc pointer
- * @vdev_id: vdev id
+ * @vdev: Pointer to vdev
  *
  * Return: Roam Band
  */
 uint32_t wlan_cm_get_roam_band_value(struct wlan_objmgr_psoc *psoc,
-				     uint8_t vdev_id);
+				     struct wlan_objmgr_vdev *vdev);
 
 /**
  * wlan_cm_roam_extract_frame_info  - Extract the roam frame info TLV
@@ -848,15 +866,6 @@ void
 wlan_cm_roam_set_vendor_btm_params(struct wlan_objmgr_psoc *psoc,
 				   struct wlan_cm_roam_vendor_btm_params
 								*param);
-/**
- * wlan_cm_roam_disable_vendor_btm() - API to disable vendor btm by default
- * reason
- * @psoc: PSOC pointer
- *
- * Return: none
- */
-void wlan_cm_roam_disable_vendor_btm(struct wlan_objmgr_psoc *psoc);
-
 /**
  * wlan_cm_roam_get_vendor_btm_params() - API to get vendor btm param
  * @psoc: PSOC pointer
@@ -984,7 +993,6 @@ QDF_STATUS
 cm_akm_roam_allowed(struct wlan_objmgr_psoc *psoc,
 		    struct wlan_objmgr_vdev *vdev);
 
-#ifdef ROAM_TARGET_IF_CONVERGENCE
 /**
  * cm_invalid_roam_reason_handler() - Handler for invalid roam reason
  * @vdev_id: vdev id
@@ -1077,7 +1085,59 @@ cm_roam_sync_frame_event_handler(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 					 uint8_t *event,
 					 uint32_t len);
-#endif /* ROAM_TARGET_IF_CONVERGENCE */
+
+/**
+ * wlan_cm_update_roam_rt_stats() - Store roam event stats command params
+ * @psoc: PSOC pointer
+ * @value: Value to update
+ * @stats: type of value to update
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_cm_update_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			     uint8_t value, enum roam_rt_stats_params stats);
+
+/**
+ * wlan_cm_get_roam_rt_stats() - Get roam event stats value
+ * @psoc: PSOC pointer
+ * @stats: Get roam event command param for specific attribute
+ *
+ * Return: Roam events stats param value
+ */
+uint8_t
+wlan_cm_get_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			  enum roam_rt_stats_params stats);
+
+/**
+ * cm_report_roam_rt_stats - Gathers/Sends the roam events stats
+ * @psoc:      Pointer to psoc structure
+ * @vdev_id:   Vdev ID
+ * @events:    Event/Notif type from roam event/roam stats event
+ * @roam_info: Roam stats from the roam stats event
+ * @value:     Notif param value from the roam event
+ * @idx:       TLV index in roam stats event
+ *
+ * Gathers the roam stats from the roam event and the roam stats event and
+ * sends them to hdd for filling the vendor attributes.
+ *
+ * Return: none
+ */
+void cm_report_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id,
+			     enum roam_rt_stats_type events,
+			     struct roam_stats_event *roam_info,
+			     uint32_t value, uint8_t idx);
+/**
+ * cm_roam_candidate_event_handler() - CM callback to save roam
+ * candidate entry in scan db
+ *
+ * @psoc - psoc objmgr ptr
+ * @frame - roam scan candidate info
+ */
+QDF_STATUS
+cm_roam_candidate_event_handler(struct wlan_objmgr_psoc *psoc,
+				struct roam_scan_candidate_frame *candidate);
 
 #else
 static inline
@@ -1088,9 +1148,13 @@ void wlan_cm_roam_activate_pcl_per_vdev(struct wlan_objmgr_psoc *psoc,
 
 static inline
 uint32_t wlan_cm_get_roam_band_value(struct wlan_objmgr_psoc *psoc,
-				     uint8_t vdev_id)
+				     struct wlan_objmgr_vdev *vdev)
 {
-	return REG_BAND_MASK_ALL;
+	uint32_t current_band;
+
+	ucfg_reg_get_band(wlan_vdev_get_pdev(vdev), &current_band);
+
+	return current_band;
 }
 
 static inline
@@ -1148,11 +1212,6 @@ wlan_cm_roam_disable_vendor_btm(struct wlan_objmgr_psoc *psoc)
 
 static inline void
 wlan_cm_roam_set_vendor_btm_params(struct wlan_objmgr_psoc *psoc,
-				   struct wlan_cm_roam_vendor_btm_params *param)
-{}
-
-static inline void
-wlan_cm_roam_get_vendor_btm_params(struct wlan_objmgr_psoc *psoc,
 				   struct wlan_cm_roam_vendor_btm_params *param)
 {}
 
@@ -1215,7 +1274,6 @@ cm_akm_roam_allowed(struct wlan_objmgr_psoc *psoc,
 	return false;
 }
 
-#ifdef ROAM_TARGET_IF_CONVERGENCE
 static inline void
 cm_handle_roam_reason_ho_failed(uint8_t vdev_id, struct qdf_mac_addr bssid,
 				struct cm_hw_mode_trans_ind *hw_mode_trans_ind)
@@ -1226,7 +1284,34 @@ cm_handle_scan_ch_list_data(struct cm_roam_scan_ch_resp *data)
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }
-#endif
+
+static inline QDF_STATUS
+wlan_cm_update_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			     uint8_t value, enum roam_rt_stats_params stats)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline uint8_t
+wlan_cm_get_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			  enum roam_rt_stats_params stats)
+{
+	return 0;
+}
+
+static inline void
+cm_report_roam_rt_stats(struct wlan_objmgr_psoc *psoc,
+			uint8_t vdev_id, enum roam_rt_stats_type events,
+			struct roam_stats_event *roam_info,
+			uint32_t value, uint8_t idx)
+{}
+
+static inline QDF_STATUS
+cm_roam_candidate_event_handler(struct wlan_objmgr_psoc *psoc,
+				struct roam_scan_candidate_frame *candidate)
+{
+	return QDF_STATUS_SUCCESS;
+}
 #endif /* WLAN_FEATURE_ROAM_OFFLOAD */
 
 #ifdef WLAN_FEATURE_FIPS
@@ -1281,7 +1366,6 @@ QDF_STATUS wlan_get_chan_by_link_id_from_rnr(struct wlan_objmgr_vdev *vdev,
 					     uint8_t *chan, uint8_t *op_class);
 #endif
 
-#ifdef ROAM_TARGET_IF_CONVERGENCE
 /**
  * cm_rso_cmd_status_event_handler() - Handler for rso cmd status
  * @vdev_id: vdev id
@@ -1502,12 +1586,4 @@ wlan_cm_fw_to_host_phymode(WMI_HOST_WLAN_PHY_MODE phymode);
 QDF_STATUS
 wlan_cm_sta_mlme_vdev_roam_notify(struct vdev_mlme_obj *vdev_mlme,
 				  uint16_t data_len, void *data);
-#else
-static inline QDF_STATUS
-wlan_cm_sta_mlme_vdev_roam_notify(struct vdev_mlme_obj *vdev_mlme,
-				  uint16_t data_len, void *data)
-{
-	return QDF_STATUS_E_NOSUPPORT;
-}
-#endif /* ROAM_TARGET_IF_CONVERGENCE */
 #endif  /* WLAN_CM_ROAM_API_H__ */

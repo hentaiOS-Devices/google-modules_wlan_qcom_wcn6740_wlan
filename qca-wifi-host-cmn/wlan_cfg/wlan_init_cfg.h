@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -32,7 +33,11 @@
 #define WLAN_CFG_INT_NUM_CONTEXTS 18
 #define WLAN_CFG_INT_NUM_CONTEXTS_MAX 18
 #else
+#if defined(TX_MULTI_TCL)
+#define WLAN_CFG_INT_NUM_CONTEXTS 9
+#else
 #define WLAN_CFG_INT_NUM_CONTEXTS 7
+#endif
 #define WLAN_CFG_INT_NUM_CONTEXTS_MAX 14
 #endif
 #define WLAN_CFG_RXDMA1_ENABLE 1
@@ -47,6 +52,8 @@
 
 #define NUM_RXDMA_RINGS_PER_PDEV 2
 
+#define DP_NUM_MACS_PER_PDEV 2
+
 /*Maximum Number of LMAC instances*/
 #define MAX_NUM_LMAC_HW	2
 #else
@@ -60,6 +67,7 @@
 #define WLAN_CFG_INT_NUM_CONTEXTS_MAX 11
 #define NUM_RXDMA_RINGS_PER_PDEV 1
 #define MAX_NUM_LMAC_HW	3
+#define DP_NUM_MACS_PER_PDEV 1
 
 #endif
 
@@ -72,8 +80,6 @@
 
 #define MAX_REO_DEST_RINGS 8
 #define MAX_TCL_DATA_RINGS 5
-
-#define WBM2SW_REL_ERR_RING_NUM 3
 
 #define MAX_RX_MAC_RINGS 2
 

@@ -269,36 +269,6 @@ int wlan_hdd_cfg80211_cancel_remain_on_channel(struct wiphy *wiphy,
 	return errno;
 }
 
-/**
- * wlan_hdd_validate_and_override_offchan() - To validate and override offchan
- * @adapter: hdd adapter of vdev
- * @chan: channel info of mgmt to be sent
- * @offchan: off channel flag to check and override
- *
- * This function is to validate the channel info against adapter current state
- * and home channel, if off channel not needed, override offchan flag.
- *
- * Return: None
- */
-static void
-wlan_hdd_validate_and_override_offchan(struct hdd_adapter *adapter,
-				       struct ieee80211_channel *chan,
-				       bool *offchan)
-{
-	qdf_freq_t home_ch_freq;
-
-	if (!offchan || !chan || !(*offchan))
-		return;
-
-	home_ch_freq = hdd_get_adapter_home_channel(adapter);
-
-	if (chan->center_freq == home_ch_freq) {
-		hdd_debug("override offchan to 0 at home channel %d",
-			  home_ch_freq);
-		*offchan = false;
-	}
-}
-
 static int __wlan_hdd_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 			      struct ieee80211_channel *chan, bool offchan,
 			      unsigned int wait,
@@ -360,8 +330,6 @@ static int __wlan_hdd_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 		  chan ? chan->center_freq : 0);
 	hdd_debug("wait:%d offchan:%d do_not_wait_ack:%d",
 		  wait, offchan, dont_wait_for_ack);
-
-	wlan_hdd_validate_and_override_offchan(adapter, chan, &offchan);
 
 	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
 	if (!vdev) {
@@ -528,7 +496,7 @@ int hdd_set_p2p_noa(struct net_device *dev, uint8_t *command)
 		noa.single_noa_duration = duration;
 		noa.ps_selection = P2P_POWER_SAVE_TYPE_SINGLE_NOA;
 	} else {
-		if (duration >= interval) {
+		if (count && (duration >= interval)) {
 			hdd_err("Duration should be less than interval");
 			return -EINVAL;
 		}
@@ -707,6 +675,7 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 	QDF_STATUS status;
 	struct wlan_objmgr_vdev *vdev;
 	int ret;
+	struct hdd_adapter_create_param create_params = {0};
 
 	hdd_enter();
 
@@ -800,7 +769,8 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 		p2p_device_address.bytes[4] ^= 0x80;
 		adapter = hdd_open_adapter(hdd_ctx, mode, name,
 					   p2p_device_address.bytes,
-					   name_assign_type, true);
+					   name_assign_type, true,
+					   &create_params);
 	} else {
 		uint8_t *device_address;
 		if (strnstr(name, "p2p", 3) && mode == QDF_STA_MODE) {
@@ -813,7 +783,8 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 
 		adapter = hdd_open_adapter(hdd_ctx, mode, name,
 					   device_address,
-					   name_assign_type, true);
+					   name_assign_type, true,
+					   &create_params);
 		if (!adapter)
 			wlan_hdd_release_intf_addr(hdd_ctx, device_address);
 	}

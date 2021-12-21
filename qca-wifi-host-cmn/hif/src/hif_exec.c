@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -117,6 +118,11 @@ hif_hist_skip_event_record(struct hif_event_history *hist_ev,
 		break;
 	case HIF_EVENT_SRNG_ACCESS_END:
 		if (rec->type != HIF_EVENT_SRNG_ACCESS_START)
+			return true;
+		break;
+	case HIF_EVENT_BH_COMPLETE:
+	case HIF_EVENT_BH_FORCE_BREAK:
+		if (rec->type != HIF_EVENT_SRNG_ACCESS_END)
 			return true;
 		break;
 	default:
@@ -587,6 +593,20 @@ void hif_latency_profile_start(struct hif_exec_context *hif_ext_group)
 #endif
 
 #ifdef FEATURE_NAPI
+#ifdef FEATURE_IRQ_AFFINITY
+static inline int32_t
+hif_is_force_napi_complete_required(struct hif_exec_context *hif_ext_group)
+{
+	return qdf_atomic_inc_not_zero(&hif_ext_group->force_napi_complete);
+}
+#else
+static inline int32_t
+hif_is_force_napi_complete_required(struct hif_exec_context *hif_ext_group)
+{
+	return 0;
+}
+#endif
+
 /**
  * hif_exec_poll() - napi poll
  * napi: napi struct
@@ -622,7 +642,10 @@ static int hif_exec_poll(struct napi_struct *napi, int budget)
 
 	actual_dones = work_done;
 
-	if (!hif_ext_group->force_break && work_done < normalized_budget) {
+	if (hif_is_force_napi_complete_required(hif_ext_group) ||
+	    (!hif_ext_group->force_break && work_done < normalized_budget)) {
+		hif_record_event(hif_ext_group->hif, hif_ext_group->grp_id,
+				 0, 0, 0, HIF_EVENT_BH_COMPLETE);
 		napi_complete(napi);
 		qdf_atomic_dec(&scn->active_grp_tasklet_cnt);
 		hif_ext_group->irq_enable(hif_ext_group);
@@ -630,6 +653,8 @@ static int hif_exec_poll(struct napi_struct *napi, int budget)
 	} else {
 		/* if the ext_group supports time based yield, claim full work
 		 * done anyways */
+		hif_record_event(hif_ext_group->hif, hif_ext_group->grp_id,
+				 0, 0, 0, HIF_EVENT_BH_FORCE_BREAK);
 		work_done = normalized_budget;
 	}
 
@@ -956,6 +981,19 @@ void hif_exec_kill(struct hif_opaque_softc *hif_ctx)
 	qdf_atomic_set(&hif_state->ol_sc.active_grp_tasklet_cnt, 0);
 }
 
+#ifdef FEATURE_IRQ_AFFINITY
+static inline void
+hif_init_force_napi_complete(struct hif_exec_context *hif_ext_group)
+{
+	qdf_atomic_init(&hif_ext_group->force_napi_complete);
+}
+#else
+static inline void
+hif_init_force_napi_complete(struct hif_exec_context *hif_ext_group)
+{
+}
+#endif
+
 /**
  * hif_register_ext_group() - API to register external group
  * interrupt handler.
@@ -1009,6 +1047,7 @@ QDF_STATUS hif_register_ext_group(struct hif_opaque_softc *hif_ctx,
 	hif_ext_group->hif = hif_ctx;
 	hif_ext_group->context_name = context_name;
 	hif_ext_group->type = type;
+	hif_init_force_napi_complete(hif_ext_group);
 
 	hif_state->hif_num_extgroup++;
 	return QDF_STATUS_SUCCESS;
