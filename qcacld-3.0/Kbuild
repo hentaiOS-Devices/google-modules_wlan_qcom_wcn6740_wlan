@@ -4293,6 +4293,8 @@ else
 endif
 
 # Android wifi state control interface
+# Define WLAN_CTRL_NAME by Google to create /dev/wlan
+WLAN_CTRL_NAME ?= wlan
 ifneq ($(WLAN_CTRL_NAME),)
 ccflags-y += -DWLAN_CTRL_NAME=\"$(WLAN_CTRL_NAME)\"
 endif
