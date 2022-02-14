@@ -4579,4 +4579,29 @@ QDF_STATUS
 wmi_unified_pdev_set_mec_timer(struct wmi_unified *wmi_handle,
 			       struct set_mec_timer_params *param);
 #endif
+
+#ifdef WLAN_FEATURE_DYNAMIC_MAC_ADDR_UPDATE
+/**
+ * wmi_unified_send_set_mac_addr() - Send VDEV set MAC address command to FW
+ * @wmi_handle: WMI handle
+ * @params: Set MAC address command params
+ *
+ * Return: QDF_STATUS_SUCCESS for success or error code
+ */
+QDF_STATUS wmi_unified_send_set_mac_addr(struct wmi_unified *wmi_handle,
+					 struct set_mac_addr_params *params);
+
+/**
+ * wmi_extract_update_mac_address_event() - Extract update MAC address event
+ * @wmi_handle: WMI handle
+ * @evt_buf: event buffer
+ * @vdev_id: VDEV ID
+ * @status: FW status for the set MAC address operation
+ *
+ * Return: QDF_STATUS_SUCCESS for success or error code
+ */
+QDF_STATUS wmi_extract_update_mac_address_event(wmi_unified_t wmi_handle,
+						void *evt_buf, uint8_t *vdev_id,
+						uint8_t *status);
+#endif
 #endif /* _WMI_UNIFIED_API_H_ */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -2035,6 +2035,57 @@ static int wma_legacy_service_ready_event_handler(uint32_t event_id,
 	return 0;
 }
 
+#ifdef WLAN_FEATURE_CAL_FAILURE_TRIGGER
+/**
+ * wma_process_cal_fail_info() - Process cal failure event and
+ *                               send it to userspace
+ * @wmi_event:  Cal failure event data
+ */
+static void wma_process_cal_fail_info(uint8_t *wmi_event)
+{
+	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
+	uint8_t *buf_ptr;
+	wmi_debug_mesg_fw_cal_failure_param *cal_failure_event;
+
+	if (!mac) {
+		wma_err("Invalid mac context");
+		return;
+	}
+
+	if (!mac->cal_failure_event_cb) {
+		wma_err("Callback not registered for cal failure event");
+		return;
+	}
+
+	buf_ptr = wmi_event;
+	buf_ptr = buf_ptr + sizeof(wmi_debug_mesg_flush_complete_fixed_param) +
+		  WMI_TLV_HDR_SIZE +
+		  sizeof(wmi_debug_mesg_fw_data_stall_param) + WMI_TLV_HDR_SIZE;
+
+	cal_failure_event = (wmi_debug_mesg_fw_cal_failure_param *)buf_ptr;
+
+	if (((cal_failure_event->tlv_header & 0xFFFF0000) >> 16 ==
+			WMITLV_TAG_STRUC_wmi_debug_mesg_fw_cal_failure_param)) {
+		/**
+		 * Log calibration failure information received from FW
+		 */
+		wma_debug("Calibration failure event:");
+		wma_debug("calType: %x calFailureReasonCode: %x",
+			  cal_failure_event->cal_type,
+			  cal_failure_event->cal_failure_reason_code);
+		mac->cal_failure_event_cb(
+				cal_failure_event->cal_type,
+				cal_failure_event->cal_failure_reason_code);
+	} else {
+		wma_err("Invalid TLV header in cal failure event");
+	}
+}
+#else
+static inline void wma_process_cal_fail_info(uint8_t *wmi_event)
+{
+}
+#endif
+
 /**
  * wma_flush_complete_evt_handler() - FW log flush complete event handler
  * @handle: WMI handle
@@ -2066,7 +2117,7 @@ static int wma_flush_complete_evt_handler(void *handle,
 	reason_code = wmi_event->reserved0;
 	wma_debug("Received reason code %d from FW", reason_code);
 
-	if (reason_code == WMA_DATA_STALL_TRIGGER) {
+	if (reason_code == WMI_DIAG_TRIGGER_DATA_STALL) {
 		buf_ptr = (uint8_t *)wmi_event;
 		buf_ptr = buf_ptr +
 			  sizeof(wmi_debug_mesg_flush_complete_fixed_param) +
@@ -2075,7 +2126,7 @@ static int wma_flush_complete_evt_handler(void *handle,
 				(wmi_debug_mesg_fw_data_stall_param *)buf_ptr;
 	}
 
-	if (reason_code == WMA_DATA_STALL_TRIGGER &&
+	if (reason_code == WMI_DIAG_TRIGGER_DATA_STALL &&
 	    ((data_stall_event->tlv_header & 0xFFFF0000) >> 16 ==
 	      WMITLV_TAG_STRUC_wmi_debug_mesg_fw_data_stall_param)) {
 		/**
@@ -2123,6 +2174,11 @@ static int wma_flush_complete_evt_handler(void *handle,
 					OL_TXRX_PDEV_ID,
 					data_stall_event->vdev_id_bitmap,
 					data_stall_event->recovery_type);
+	}
+
+	if (reason_code == WMI_DIAG_TRIGGER_CAL_FAILURE) {
+		wma_process_cal_fail_info((uint8_t *)wmi_event);
+		return QDF_STATUS_SUCCESS;
 	}
 
 	/*
@@ -4605,6 +4661,22 @@ wma_get_tdls_ax_support(struct wmi_unified *wmi_handle,
 {}
 #endif
 
+#ifdef WLAN_FEATURE_DYNAMIC_MAC_ADDR_UPDATE
+static inline void wma_get_dynamic_vdev_macaddr_support(
+		  struct wmi_unified *wmi_handle, struct wma_tgt_services *cfg)
+{
+	cfg->dynamic_vdev_macaddr_support =
+		wmi_service_enabled(
+			wmi_handle,
+			wmi_service_dynamic_update_vdev_macaddr_support);
+}
+#else
+static inline void wma_get_dynamic_vdev_macaddr_support(
+		  struct wmi_unified *wmi_handle, struct wma_tgt_services *cfg)
+{
+}
+#endif
+
 /**
  * wma_update_target_services() - update target services from wma handle
  * @wmi_handle: Unified wmi handle
@@ -4748,6 +4820,8 @@ static inline void wma_update_target_services(struct wmi_unified *wmi_handle,
 
 	wma_get_igmp_offload_enable(wmi_handle, cfg);
 	wma_get_tdls_ax_support(wmi_handle, cfg);
+
+	wma_get_dynamic_vdev_macaddr_support(wmi_handle, cfg);
 }
 
 /**
@@ -7173,7 +7247,7 @@ static void wma_set_wifi_start_packet_stats(void *wma_handle,
 		ATH_PKTLOG_RX | ATH_PKTLOG_TX |
 		ATH_PKTLOG_TEXT | ATH_PKTLOG_SW_EVENT;
 #elif defined(QCA_WIFI_QCA6390) || defined(QCA_WIFI_QCA6490) || \
-      defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_WCN7850)
+      defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_KIWI)
 	log_state = ATH_PKTLOG_RCFIND | ATH_PKTLOG_RCUPDATE |
 		    ATH_PKTLOG_TX | ATH_PKTLOG_LITE_T2H |
 		    ATH_PKTLOG_SW_EVENT | ATH_PKTLOG_RX;
@@ -8990,6 +9064,8 @@ wmi_pcl_chan_weight wma_map_pcl_weights(uint32_t pcl_weight)
 		return WMI_PCL_WEIGHT_HIGH;
 	case WEIGHT_OF_GROUP3_PCL_CHANNELS:
 		return WMI_PCL_WEIGHT_MEDIUM;
+	case WEIGHT_OF_GROUP4_PCL_CHANNELS:
+		return WMI_PCL_WEIGHT_MEDIUM;
 	case WEIGHT_OF_NON_PCL_CHANNELS:
 		return WMI_PCL_WEIGHT_LOW;
 	default:
@@ -9034,6 +9110,9 @@ QDF_STATUS wma_send_set_pcl_cmd(tp_wma_handle wma_handle,
 	if (msg->vdev_id != WLAN_UMAC_VDEV_ID_MAX)
 		return wlan_cm_roam_send_set_vdev_pcl(wma_handle->psoc, msg);
 
+
+	wma_debug("RSO_CFG: BandCapability:%d, band_mask:%d",
+		  wma_handle->bandcapability, msg->band_mask);
 	for (i = 0; i < wma_handle->saved_chan.num_channels; i++) {
 		msg->chan_weights.saved_chan_list[i] =
 					wma_handle->saved_chan.ch_freq_list[i];
@@ -9067,7 +9146,7 @@ QDF_STATUS wma_send_set_pcl_cmd(tp_wma_handle wma_handle,
 		wma_err("Error in creating weighed pcl");
 		return status;
 	}
-	wma_debug("Dump channel list send to wmi");
+	wma_debug("RSO_CFG: Dump PDEV PCL weights for vdev[%d]", msg->vdev_id);
 	policy_mgr_dump_channel_list(msg->chan_weights.saved_num_chan,
 				     msg->chan_weights.saved_chan_list,
 				     msg->chan_weights.weighed_valid_list);

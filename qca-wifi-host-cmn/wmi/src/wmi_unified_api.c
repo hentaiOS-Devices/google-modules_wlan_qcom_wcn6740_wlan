@@ -3662,3 +3662,25 @@ wmi_unified_pdev_set_mec_timer(struct wmi_unified *wmi_handle,
 	return QDF_STATUS_E_FAILURE;
 }
 #endif
+
+#ifdef WLAN_FEATURE_DYNAMIC_MAC_ADDR_UPDATE
+QDF_STATUS wmi_unified_send_set_mac_addr(struct wmi_unified *wmi_handle,
+					 struct set_mac_addr_params *params)
+{
+	if (wmi_handle->ops->send_set_mac_address_cmd)
+		return wmi_handle->ops->send_set_mac_address_cmd(wmi_handle,
+								 params);
+	return QDF_STATUS_E_FAILURE;
+}
+
+QDF_STATUS wmi_extract_update_mac_address_event(wmi_unified_t wmi_handle,
+						void *evt_buf, uint8_t *vdev_id,
+						uint8_t *status)
+{
+	if (wmi_handle->ops->extract_update_mac_address_event)
+		return wmi_handle->ops->extract_update_mac_address_event(
+					wmi_handle, evt_buf, vdev_id, status);
+
+	return QDF_STATUS_E_FAILURE;
+}
+#endif

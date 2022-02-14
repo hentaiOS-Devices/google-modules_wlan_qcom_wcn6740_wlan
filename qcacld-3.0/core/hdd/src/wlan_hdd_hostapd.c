@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -768,6 +768,13 @@ static int __hdd_hostapd_set_mac_address(struct net_device *dev, void *addr)
 	hdd_debug("Changing MAC to " QDF_MAC_ADDR_FMT " of interface %s ",
 		  QDF_MAC_ADDR_REF(mac_addr.bytes),
 		  dev->name);
+
+	if (adapter->vdev) {
+		ret = hdd_dynamic_mac_address_set(hdd_ctx, adapter, mac_addr);
+		if (ret)
+			return ret;
+	}
+
 	hdd_update_dynamic_mac(hdd_ctx, &adapter->mac_addr, &mac_addr);
 	memcpy(&adapter->mac_addr, psta_mac_addr->sa_data, ETH_ALEN);
 	memcpy(dev->dev_addr, psta_mac_addr->sa_data, ETH_ALEN);
@@ -1920,6 +1927,7 @@ QDF_STATUS hdd_hostapd_sap_event_cb(struct sap_event *sap_event,
 	uint8_t pdev_id;
 #ifdef WLAN_FEATURE_11BE_MLO
 	struct wlan_objmgr_peer *peer;
+	uint8_t *mld;
 #endif
 	bool notify_new_sta = true;
 
@@ -2418,10 +2426,14 @@ QDF_STATUS hdd_hostapd_sap_event_cb(struct sap_event *sap_event,
 				return QDF_STATUS_E_INVAL;
 			}
 
-			if (!wlan_peer_mlme_is_assoc_peer(peer)) {
+			mld = wlan_peer_mlme_get_mldaddr(peer);
+			if (!wlan_peer_mlme_is_assoc_peer(peer) &&
+			    !qdf_is_macaddr_zero((struct qdf_mac_addr *)mld)) {
 				hdd_err("skip userspace notification");
 				notify_new_sta = false;
 			}
+
+			wlan_objmgr_peer_release_ref(peer, WLAN_OSIF_ID);
 #endif
 		} else {
 			qdf_status = hdd_softap_register_sta(
@@ -6106,7 +6118,7 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 		goto error;
 	}
 
-	qdf_status = qdf_wait_for_event_completion(&hostapd_state->qdf_event,
+	qdf_status = qdf_wait_single_event(&hostapd_state->qdf_event,
 					SME_CMD_START_BSS_TIMEOUT);
 
 	wlansap_reset_sap_config_add_ie(config, eUPDATE_IE_ALL);
@@ -6123,7 +6135,8 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 		hdd_set_connection_in_progress(false);
 		sme_get_command_q_status(mac_handle);
 		wlansap_stop_bss(WLAN_HDD_GET_SAP_CTX_PTR(adapter));
-		QDF_ASSERT(0);
+		if (!cds_is_driver_recovering())
+			QDF_ASSERT(0);
 		ret = -EINVAL;
 		goto error;
 	}
@@ -6596,8 +6609,8 @@ wlan_hdd_ap_ap_force_scc_override(struct hdd_adapter *adapter,
 			continue;
 		if (!policy_mgr_is_hw_dbs_capable(hdd_ctx->psoc))
 			break;
-		if (wlan_reg_is_same_band_freqs(freq,
-						op_freq[i]))
+		if (wlan_reg_is_same_band_freqs(freq, op_freq[i]) &&
+		    !policy_mgr_are_sbs_chan(hdd_ctx->psoc, freq, op_freq[i]))
 			break;
 	}
 	if (i >= cc_count)

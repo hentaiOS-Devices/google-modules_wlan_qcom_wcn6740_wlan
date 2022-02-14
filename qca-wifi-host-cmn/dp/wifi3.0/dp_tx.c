@@ -1479,7 +1479,13 @@ dp_tx_ring_access_end_wrapper(struct dp_soc *soc,
 				 RTPM_ID_DW_TX_HW_ENQUEUE, true);
 	switch (ret) {
 	case 0:
-		dp_tx_ring_access_end(soc, hal_ring_hdl, coalesce);
+		if (hif_system_pm_state_check(soc->hif_handle)) {
+			dp_tx_hal_ring_access_end_reap(soc, hal_ring_hdl);
+			hal_srng_set_event(hal_ring_hdl, HAL_SRNG_FLUSH_EVENT);
+			hal_srng_inc_flush_cnt(hal_ring_hdl);
+		} else {
+			dp_tx_ring_access_end(soc, hal_ring_hdl, coalesce);
+		}
 		hif_pm_runtime_put(soc->hif_handle,
 				   RTPM_ID_DW_TX_HW_ENQUEUE);
 		break;
@@ -1514,6 +1520,23 @@ dp_tx_ring_access_end_wrapper(struct dp_soc *soc,
 	}
 }
 #else
+
+#ifdef DP_POWER_SAVE
+void
+dp_tx_ring_access_end_wrapper(struct dp_soc *soc,
+			      hal_ring_handle_t hal_ring_hdl,
+			      int coalesce)
+{
+	if (hif_system_pm_state_check(soc->hif_handle)) {
+		dp_tx_hal_ring_access_end_reap(soc, hal_ring_hdl);
+		hal_srng_set_event(hal_ring_hdl, HAL_SRNG_FLUSH_EVENT);
+		hal_srng_inc_flush_cnt(hal_ring_hdl);
+	} else {
+		dp_tx_ring_access_end(soc, hal_ring_hdl, coalesce);
+	}
+}
+#endif
+
 static inline int dp_get_rtpm_tput_policy_requirement(struct dp_soc *soc)
 {
 	return 0;
@@ -3655,10 +3678,12 @@ dp_tx_update_peer_stats(struct dp_tx_desc_s *tx_desc,
 	DP_STATS_INCC(peer, tx.stbc, 1, ts->stbc);
 	DP_STATS_INCC(peer, tx.ldpc, 1, ts->ldpc);
 	DP_STATS_INCC(peer, tx.retries, 1, ts->transmit_cnt > 1);
-	if (ts->first_msdu)
+	if (ts->first_msdu) {
+		DP_STATS_INCC(peer, tx.retries_mpdu, 1, ts->transmit_cnt > 1);
 		DP_STATS_INCC(peer, tx.mpdu_success_with_retries,
 			      qdf_do_div(ts->transmit_cnt, DP_RETRY_COUNT),
 			      ts->transmit_cnt > DP_RETRY_COUNT);
+	}
 	peer->stats.tx.last_tx_ts = qdf_system_ticks();
 }
 
@@ -3858,6 +3883,12 @@ dp_tx_comp_process_desc(struct dp_soc *soc,
 	}
 
 	dp_send_completion_to_pkt_capture(soc, desc, ts);
+
+	if (dp_tx_pkt_tracepoints_enabled())
+		qdf_trace_dp_packet(desc->nbuf, QDF_TX,
+				    desc->msdu_ext_desc ?
+				    desc->msdu_ext_desc->tso_desc : NULL,
+				    desc->timestamp);
 
 	if (!(desc->msdu_ext_desc)) {
 		dp_tx_enh_unmap(soc, desc);

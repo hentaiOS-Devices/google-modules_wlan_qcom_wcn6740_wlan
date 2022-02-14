@@ -1104,7 +1104,7 @@ free_nbuf:
 }
 
 #if defined(QCA_WIFI_QCA6390) || defined(QCA_WIFI_QCA6490) || \
-    defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_WCN7850)
+    defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_KIWI)
 /**
  * dp_rx_null_q_handle_invalid_peer_id_exception() - to find exception
  * @soc: pointer to dp_soc struct
@@ -2229,7 +2229,7 @@ dp_rx_err_process(struct dp_intr *int_ctx, struct dp_soc *soc,
 		if (qdf_unlikely((msdu_list.rbm[0] !=
 					dp_rx_get_rx_bm_id(soc)) &&
 				 (msdu_list.rbm[0] !=
-				  HAL_RX_BUF_RBM_WBM_CHIP0_IDLE_DESC_LIST) &&
+				  soc->idle_link_bm_id) &&
 				 (msdu_list.rbm[0] !=
 					dp_rx_get_defrag_bm_id(soc)))) {
 			/* TODO */

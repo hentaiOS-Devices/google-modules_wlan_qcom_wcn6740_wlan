@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -66,6 +66,7 @@
 #include "wlan_lmac_if_def.h"
 #include "wlan_reg_services_api.h"
 #include <lim_mlo.h>
+#include <wlan_vdev_mgr_utils_api.h>
 
 /* SME REQ processing function templates */
 static bool __lim_process_sme_sys_ready_ind(struct mac_context *, uint32_t *);
@@ -2127,8 +2128,16 @@ lim_handle_11ac_dot11_mode(enum mlme_dot11_mode bss_dot11_mode,
 
 static QDF_STATUS
 lim_handle_11ax_dot11_mode(enum mlme_dot11_mode bss_dot11_mode,
-			   enum mlme_dot11_mode *intersected_mode)
+			   enum mlme_dot11_mode *intersected_mode,
+			   tDot11fBeaconIEs *ie_struct,
+			   struct bss_description *bss_desc)
 {
+	bool vht_capable = false;
+
+	if (IS_BSS_VHT_CAPABLE(ie_struct->VHTCaps) ||
+	    IS_BSS_VHT_CAPABLE(ie_struct->vendor_vht_ie.VHTCaps))
+		vht_capable = true;
+
 	switch (bss_dot11_mode) {
 	case MLME_DOT11_MODE_11N:
 		*intersected_mode = MLME_DOT11_MODE_11N;
@@ -2138,6 +2147,29 @@ lim_handle_11ax_dot11_mode(enum mlme_dot11_mode bss_dot11_mode,
 		break;
 	case MLME_DOT11_MODE_11AX:
 		*intersected_mode = MLME_DOT11_MODE_11AX;
+		break;
+	case MLME_DOT11_MODE_11BE:
+		if (ie_struct->he_cap.present) {
+			*intersected_mode = MLME_DOT11_MODE_11AX;
+			break;
+		}
+		if (vht_capable) {
+			*intersected_mode = MLME_DOT11_MODE_11AC;
+			break;
+		}
+		if (ie_struct->HTCaps.present) {
+			*intersected_mode = MLME_DOT11_MODE_11N;
+			break;
+		}
+		if (WLAN_REG_IS_5GHZ_CH_FREQ(bss_desc->chan_freq)) {
+			*intersected_mode = MLME_DOT11_MODE_11A;
+		} else if (WLAN_REG_IS_24GHZ_CH_FREQ(bss_desc->chan_freq)) {
+			*intersected_mode = MLME_DOT11_MODE_11G;
+		} else {
+			pe_err("Invalid bss dot11mode %d freq %d",
+			       bss_dot11_mode, bss_desc->chan_freq);
+			return QDF_STATUS_E_FAILURE;
+		}
 		break;
 	case MLME_DOT11_MODE_11G:
 		*intersected_mode = MLME_DOT11_MODE_11G;
@@ -2316,12 +2348,19 @@ lim_handle_11ac_only_dot11_mode(enum mlme_dot11_mode bss_dot11_mode,
 
 static QDF_STATUS
 lim_handle_11ax_only_dot11_mode(enum mlme_dot11_mode bss_dot11_mode,
-				enum mlme_dot11_mode *intersected_mode)
+				enum mlme_dot11_mode *intersected_mode,
+				tDot11fBeaconIEs *ie_struct)
 {
 	switch (bss_dot11_mode) {
 	case MLME_DOT11_MODE_11AX:
 		*intersected_mode = MLME_DOT11_MODE_11AX;
 		break;
+	case MLME_DOT11_MODE_11BE:
+		if (ie_struct->he_cap.present) {
+			*intersected_mode = MLME_DOT11_MODE_11AX;
+			break;
+		}
+		/* fallthrough */
 	case MLME_DOT11_MODE_11N:
 		/* fallthrough */
 	case MLME_DOT11_MODE_11AC:
@@ -2417,10 +2456,13 @@ lim_get_intersected_dot11_mode_sta_ap(struct mac_context *mac_ctx,
 						       bss_desc);
 	case MLME_DOT11_MODE_11AX:
 		return lim_handle_11ax_dot11_mode(bss_dot11_mode,
-						  intersected_mode);
+						  intersected_mode,
+						  ie_struct,
+						  bss_desc);
 	case MLME_DOT11_MODE_11AX_ONLY:
 		return lim_handle_11ax_only_dot11_mode(bss_dot11_mode,
-						       intersected_mode);
+						       intersected_mode,
+						       ie_struct);
 	case MLME_DOT11_MODE_11BE:
 		return lim_handle_11be_dot11_mode(bss_dot11_mode,
 						  intersected_mode);
@@ -2918,29 +2960,6 @@ lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 		goto send;
 	}
 
-	if (wlan_reg_is_6ghz_chan_freq(bss_desc->chan_freq)) {
-		if (!ie_struct->Country.present)
-			pe_debug("Channel is 6G but country IE not present");
-		wlan_reg_read_current_country(mac_ctx->psoc,
-					      programmed_country);
-		status = wlan_reg_get_6g_power_type_for_ctry(mac_ctx->psoc,
-					ie_struct->Country.country,
-					programmed_country, &power_type_6g,
-					&ctry_code_match);
-		if (QDF_IS_STATUS_ERROR(status)) {
-			status = QDF_STATUS_E_NOSUPPORT;
-			goto send;
-		}
-		session->ap_power_type_6g = power_type_6g;
-		session->same_ctry_code = ctry_code_match;
-
-		lim_iterate_triplets(ie_struct->Country);
-
-		if (!ie_struct->num_transmit_power_env ||
-		    !ie_struct->transmit_power_env[0].present)
-			pe_debug("TPE not present for 6G channel");
-	}
-
 	/*
 	 * Join timeout: if we find a BeaconInterval in the BssDescription,
 	 * then set the Join Timeout to be 10 x the BeaconInterval.
@@ -3086,6 +3105,29 @@ lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 		&session->limCurrentBssQosCaps,
 		&session->gLimCurrentBssUapsd,
 		&local_power_constraint, session, &is_pwr_constraint);
+
+	if (wlan_reg_is_6ghz_chan_freq(bss_desc->chan_freq)) {
+		if (!ie_struct->Country.present)
+			pe_debug("Channel is 6G but country IE not present");
+		wlan_reg_read_current_country(mac_ctx->psoc,
+					      programmed_country);
+		status = wlan_reg_get_6g_power_type_for_ctry(
+				mac_ctx->psoc, ie_struct->Country.country,
+				programmed_country, &power_type_6g,
+				&ctry_code_match, session->ap_power_type);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			status = QDF_STATUS_E_NOSUPPORT;
+			goto send;
+		}
+		session->ap_power_type_6g = power_type_6g;
+		session->same_ctry_code = ctry_code_match;
+
+		lim_iterate_triplets(ie_struct->Country);
+
+		if (!ie_struct->num_transmit_power_env ||
+		    !ie_struct->transmit_power_env[0].present)
+			pe_debug("TPE not present for 6G channel");
+	}
 
 	if (wlan_reg_is_ext_tpc_supported(mac_ctx->psoc)) {
 		mlme_obj->reg_tpc_obj.ap_constraint_power =
@@ -3898,6 +3940,10 @@ lim_cm_handle_join_req(struct cm_vdev_join_req *req)
 	struct mac_context *mac_ctx;
 	struct pe_session *pe_session;
 	QDF_STATUS status;
+	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+
+	if (!wma)
+		return QDF_STATUS_E_INVAL;
 
 	if (!req)
 		return QDF_STATUS_E_INVAL;
@@ -3948,10 +3994,13 @@ lim_cm_handle_join_req(struct cm_vdev_join_req *req)
 fail:
 	if (pe_session)
 		pe_delete_session(mac_ctx, pe_session);
-
+	status = wma_remove_bss_peer_before_join(wma, req->vdev_id, req);
+	if (status == QDF_STATUS_E_PENDING)
+		return status;
 	lim_cm_send_connect_rsp(mac_ctx, NULL, req, CM_GENERIC_FAILURE,
-				QDF_STATUS_E_FAILURE, 0, false);
-	return QDF_STATUS_E_FAILURE;
+					QDF_STATUS_E_FAILURE, 0, false);
+
+	return status;
 }
 
 QDF_STATUS cm_process_join_req(struct scheduler_msg *msg)
@@ -3967,8 +4016,8 @@ QDF_STATUS cm_process_join_req(struct scheduler_msg *msg)
 	req = msg->bodyptr;
 
 	status = lim_cm_handle_join_req(req);
-
-	cm_free_join_req(req);
+	if (status != QDF_STATUS_E_PENDING)
+		cm_free_join_req(req);
 
 	return status;
 }
@@ -8640,6 +8689,9 @@ skip_vht:
 				      MAX_WAKELOCK_FOR_CSA);
 	qdf_runtime_pm_prevent_suspend(&session_entry->ap_ecsa_runtime_lock);
 
+	session_entry->cac_duration_ms = dfs_csa_ie_req->new_chan_cac_ms;
+	wlan_util_vdev_mgr_set_cac_timeout_for_vdev(
+		session_entry->vdev, dfs_csa_ie_req->new_chan_cac_ms);
 	/* Send CSA IE request from here */
 	lim_send_dfs_chan_sw_ie_update(mac_ctx, session_entry);
 

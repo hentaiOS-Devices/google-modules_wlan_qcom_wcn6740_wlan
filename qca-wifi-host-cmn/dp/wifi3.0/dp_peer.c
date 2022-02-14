@@ -2853,7 +2853,7 @@ static bool dp_get_peer_vdev_roaming_in_progress(struct dp_peer *peer)
 static inline
 bool dp_rx_tid_setup_allow(struct dp_peer *peer)
 {
-	if (IS_MLO_DP_LINK_PEER(peer) && !peer->assoc_link)
+	if (IS_MLO_DP_LINK_PEER(peer) && !peer->first_link)
 		return false;
 
 	return true;
@@ -2898,6 +2898,10 @@ static QDF_STATUS dp_peer_rx_reorder_queue_setup(struct dp_soc *soc,
 	struct dp_rx_tid *rx_tid;
 	struct dp_soc *link_peer_soc;
 
+	rx_tid = &peer->rx_tid[tid];
+	if (!rx_tid->hw_qdesc_paddr)
+		return QDF_STATUS_E_INVAL;
+
 	if (IS_MLO_DP_MLD_PEER(peer)) {
 		/* get link peers with reference */
 		dp_get_link_peers_ref_from_mld_peer(soc, peer,
@@ -2906,7 +2910,6 @@ static QDF_STATUS dp_peer_rx_reorder_queue_setup(struct dp_soc *soc,
 		/* send WMI cmd to each link peers */
 		for (i = 0; i < link_peers_info.num_links; i++) {
 			link_peer = link_peers_info.link_peers[i];
-			rx_tid = &link_peer->rx_tid[tid];
 			link_peer_soc = link_peer->vdev->pdev->soc;
 			if (link_peer_soc->cdp_soc.ol_ops->
 					peer_rx_reorder_queue_setup) {
@@ -2928,7 +2931,6 @@ static QDF_STATUS dp_peer_rx_reorder_queue_setup(struct dp_soc *soc,
 		/* release link peers reference */
 		dp_release_link_peers_ref(&link_peers_info, DP_MOD_ID_CDP);
 	} else if (peer->peer_type == CDP_LINK_PEER_TYPE) {
-			rx_tid = &peer->rx_tid[tid];
 			if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup) {
 				if (soc->cdp_soc.ol_ops->
 					peer_rx_reorder_queue_setup(
@@ -2970,6 +2972,9 @@ static QDF_STATUS dp_peer_rx_reorder_queue_setup(struct dp_soc *soc,
 						 uint32_t ba_window_size)
 {
 	struct dp_rx_tid *rx_tid = &peer->rx_tid[tid];
+
+	if (!rx_tid->hw_qdesc_paddr)
+		return QDF_STATUS_E_INVAL;
 
 	if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup) {
 		if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup(
@@ -3336,12 +3341,12 @@ try_desc_alloc:
 		}
 	}
 
+send_wmi_reo_cmd:
 	if (dp_get_peer_vdev_roaming_in_progress(peer)) {
 		status = QDF_STATUS_E_PERM;
 		goto error;
 	}
 
-send_wmi_reo_cmd:
 	status = dp_peer_rx_reorder_queue_setup(soc, peer,
 						tid, ba_window_size);
 	if (QDF_IS_STATUS_SUCCESS(status))
@@ -3358,6 +3363,7 @@ error:
 				rx_tid->hw_qdesc_alloc_size);
 		qdf_mem_free(rx_tid->hw_qdesc_vaddr_unaligned);
 		rx_tid->hw_qdesc_vaddr_unaligned = NULL;
+		rx_tid->hw_qdesc_paddr = 0;
 	}
 	return status;
 }
@@ -3712,7 +3718,7 @@ static void dp_peer_rx_tids_init(struct dp_peer *peer)
 	/* if not first assoc link peer or MLD peer,
 	 * not to initialize rx_tids again.
 	 */
-	if ((IS_MLO_DP_LINK_PEER(peer) && !peer->assoc_link) ||
+	if ((IS_MLO_DP_LINK_PEER(peer) && !peer->first_link) ||
 	    IS_MLO_DP_MLD_PEER(peer))
 		return;
 
@@ -4745,7 +4751,7 @@ QDF_STATUS dp_register_peer(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 	if (!IS_MLO_DP_LINK_PEER(peer))
 		dp_rx_flush_rx_cached(peer, false);
 
-	if (IS_MLO_DP_LINK_PEER(peer) && peer->assoc_link) {
+	if (IS_MLO_DP_LINK_PEER(peer) && peer->first_link) {
 		dp_peer_info("register for mld peer" QDF_MAC_ADDR_FMT,
 			     QDF_MAC_ADDR_REF(peer->mld_peer->mac_addr.raw));
 		qdf_spin_lock_bh(&peer->mld_peer->peer_info_lock);
@@ -4779,7 +4785,7 @@ QDF_STATUS dp_peer_state_update(struct cdp_soc_t *soc_hdl, uint8_t *peer_mac,
 		     QDF_MAC_ADDR_REF(peer->mac_addr.raw),
 		     peer->state);
 
-	if (IS_MLO_DP_LINK_PEER(peer) && peer->assoc_link) {
+	if (IS_MLO_DP_LINK_PEER(peer) && peer->first_link) {
 		peer->mld_peer->state = peer->state;
 		peer->mld_peer->authorize = peer->authorize;
 		dp_peer_info("mld peer" QDF_MAC_ADDR_FMT "state %d",
