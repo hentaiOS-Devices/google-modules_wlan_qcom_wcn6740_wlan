@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -34,6 +35,10 @@ avoid_freq_ext_policy [QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_RANGE] = { .type = NLA_NESTED },
 	[QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_START] = {.type = NLA_U32},
 	[QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_END] = {.type = NLA_U32},
+	[QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_POWER_CAP_DBM] = {.type =
+								NLA_S32},
+	[QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_IFACES_BITMASK] = {.type =
+								NLA_U32},
 };
 
 /**
@@ -65,6 +70,11 @@ __wlan_hdd_cfg80211_avoid_freq_ext(struct wiphy *wiphy,
 	struct ch_avoid_freq_type *avoid_freq_range;
 
 	hdd_enter_dev(wdev->netdev);
+
+	if (!ucfg_mlme_get_coex_unsafe_chan_nb_user_prefer(hdd_ctx->psoc)) {
+		hdd_debug("Coex unsafe chan nb user prefer is not set");
+		return -EOPNOTSUPP;
+	}
 
 	curr_mode = hdd_get_conparam();
 	if (curr_mode == QDF_GLOBAL_FTM_MODE ||
@@ -112,6 +122,12 @@ __wlan_hdd_cfg80211_avoid_freq_ext(struct wiphy *wiphy,
 	i = 0;
 	avoid_freq_list.ch_avoid_range_cnt = CH_AVOID_MAX_RANGE;
 
+	/* restriction mask */
+	sub_id = QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_IFACES_BITMASK;
+
+	if (tb[sub_id])
+		avoid_freq_list.restriction_mask = nla_get_u32(tb[sub_id]);
+
 	nla_for_each_nested(freq_ext, tb[id], rem) {
 		if (i == CH_AVOID_MAX_RANGE) {
 			hdd_warn("Ignoring excess range number");
@@ -157,9 +173,20 @@ __wlan_hdd_cfg80211_avoid_freq_ext(struct wiphy *wiphy,
 			ret = -EINVAL;
 			goto out;
 		}
-		hdd_debug("ext avoid freq start: %u end: %u",
+
+		/* ext txpower */
+		sub_id = QCA_WLAN_VENDOR_ATTR_AVOID_FREQUENCY_POWER_CAP_DBM;
+
+		if (tb2[sub_id]) {
+			avoid_freq_range->txpower = nla_get_s32(tb2[sub_id]);
+			avoid_freq_range->is_valid_txpower = true;
+		}
+
+		hdd_debug("ext avoid freq start: %u end: %u txpower %d mask %d",
 			  avoid_freq_range->start_freq,
-			  avoid_freq_range->end_freq);
+			  avoid_freq_range->end_freq,
+			  avoid_freq_range->txpower,
+			  avoid_freq_list.restriction_mask);
 		i++;
 	}
 
