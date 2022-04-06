@@ -28,14 +28,15 @@ DEVNAME ?= wlan
 # WLAN_PLATFORM_INC ?= $(WLAN_ROOT)/../platform/inc
 WLAN_PLATFORM_INC ?= $(WLAN_ROOT)/../../cnss2/inc
 
-ifeq ($(KERNEL_BUILD), n)
-ifneq ($(ANDROID_BUILD_TOP),)
-      ANDROID_BUILD_TOP_REL := $(shell python -c "import os.path; print(os.path.relpath('$(ANDROID_BUILD_TOP)'))")
-      override WLAN_ROOT := $(ANDROID_BUILD_TOP_REL)/$(WLAN_ROOT)
-      override WLAN_COMMON_INC := $(ANDROID_BUILD_TOP_REL)/$(WLAN_COMMON_INC)
-      override WLAN_FW_API := $(ANDROID_BUILD_TOP_REL)/$(WLAN_FW_API)
-endif
-endif
+# Remove the check of ANDROID_BUILD_TOP by Google
+#ifeq ($(KERNEL_BUILD), n)
+#ifneq ($(ANDROID_BUILD_TOP),)
+#      ANDROID_BUILD_TOP_REL := $(shell python -c "import os.path; print(os.path.relpath('$(ANDROID_BUILD_TOP)'))")
+#      override WLAN_ROOT := $(ANDROID_BUILD_TOP_REL)/$(WLAN_ROOT)
+#      override WLAN_COMMON_INC := $(ANDROID_BUILD_TOP_REL)/$(WLAN_COMMON_INC)
+#      override WLAN_FW_API := $(ANDROID_BUILD_TOP_REL)/$(WLAN_FW_API)
+#endif
+#endif
 
 include $(WLAN_ROOT)/configs/$(CONFIG_QCA_CLD_WLAN_PROFILE)_defconfig
 
