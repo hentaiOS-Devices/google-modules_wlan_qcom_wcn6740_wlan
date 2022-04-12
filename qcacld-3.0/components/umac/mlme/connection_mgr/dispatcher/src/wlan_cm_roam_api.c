@@ -85,7 +85,8 @@ wlan_cm_enable_roaming_on_connected_sta(struct wlan_objmgr_pdev *pdev,
 	return cm_roam_state_change(pdev,
 				    sta_vdev_id,
 				    WLAN_ROAM_RSO_ENABLED,
-				    REASON_CTX_INIT);
+				    REASON_CTX_INIT,
+				    NULL, false);
 }
 
 QDF_STATUS wlan_cm_roam_state_change(struct wlan_objmgr_pdev *pdev,
@@ -93,7 +94,8 @@ QDF_STATUS wlan_cm_roam_state_change(struct wlan_objmgr_pdev *pdev,
 				     enum roam_offload_state requested_state,
 				     uint8_t reason)
 {
-	return cm_roam_state_change(pdev, vdev_id, requested_state, reason);
+	return cm_roam_state_change(pdev, vdev_id, requested_state, reason,
+				    NULL, false);
 }
 
 QDF_STATUS wlan_cm_roam_send_rso_cmd(struct wlan_objmgr_psoc *psoc,
@@ -199,7 +201,7 @@ QDF_STATUS wlan_cm_disable_rso(struct wlan_objmgr_pdev *pdev, uint8_t vdev_id,
 		   vdev_id, cm_roam_get_requestor_string(requestor));
 
 	status = cm_roam_state_change(pdev, vdev_id, WLAN_ROAM_RSO_STOPPED,
-				      REASON_DRIVER_DISABLED);
+				      REASON_DRIVER_DISABLED, NULL, false);
 	cm_roam_release_lock(vdev);
 
 release_ref:
@@ -234,7 +236,7 @@ QDF_STATUS wlan_cm_enable_rso(struct wlan_objmgr_pdev *pdev, uint8_t vdev_id,
 		   vdev_id, cm_roam_get_requestor_string(requestor));
 
 	status = cm_roam_state_change(pdev, vdev_id, WLAN_ROAM_RSO_ENABLED,
-				      REASON_DRIVER_ENABLED);
+				      REASON_DRIVER_ENABLED, NULL, false);
 	cm_roam_release_lock(vdev);
 
 release_ref:
@@ -328,7 +330,7 @@ exit:
 QDF_STATUS wlan_cm_roam_stop_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 				 uint8_t reason)
 {
-	return cm_roam_stop_req(psoc, vdev_id, reason);
+	return cm_roam_stop_req(psoc, vdev_id, reason, NULL, false);
 }
 
 bool wlan_cm_same_band_sta_allowed(struct wlan_objmgr_psoc *psoc)
@@ -828,6 +830,9 @@ QDF_STATUS wlan_cm_roam_cfg_get_value(struct wlan_objmgr_psoc *psoc,
 		break;
 	case ROAM_BAND:
 		dst_config->uint_value = rso_cfg->roam_band_bitmask;
+		break;
+	case HI_RSSI_SCAN_RSSI_DELTA:
+		dst_config->uint_value = src_cfg->hi_rssi_scan_rssi_delta;
 		break;
 	default:
 		mlme_err("Invalid roam config requested:%d", roam_cfg_type);
@@ -1759,11 +1764,11 @@ QDF_STATUS cm_mlme_roam_preauth_fail(struct wlan_objmgr_vdev *vdev,
 	if (req->source == CM_ROAMING_FW)
 		cm_roam_state_change(pdev, vdev_id,
 				     ROAM_SCAN_OFFLOAD_RESTART,
-				     roam_reason);
+				     roam_reason, NULL, false);
 	else
 		cm_roam_state_change(pdev, vdev_id,
 				     ROAM_SCAN_OFFLOAD_START,
-				     roam_reason);
+				     roam_reason, NULL, false);
 	return QDF_STATUS_SUCCESS;
 }
 #endif
@@ -2517,10 +2522,30 @@ cm_roam_event_handler(struct roam_offload_roam_event *roam_event)
 						  roam_event->rssi);
 		break;
 	case ROAM_REASON_HO_FAILED:
+		/*
+		 * Continue disconnect only if RSO_STOP timer is running when
+		 * this event is received and stopped as part of this.
+		 * Otherwise it's a normal HO_FAIL event and handle it in
+		 * legacy way.
+		 */
+		if (roam_event->rso_timer_stopped)
+			wlan_cm_rso_stop_continue_disconnect(roam_event->psoc,
+						roam_event->vdev_id, true);
+		/* fallthrough */
 	case ROAM_REASON_INVALID:
 		cm_handle_roam_offload_events(roam_event);
 		break;
 	case ROAM_REASON_RSO_STATUS:
+		/*
+		 * roam_event->rso_timer_stopped is set to true in target_if
+		 * only if RSO_STOP timer is running and it's stopped
+		 * successfully
+		 */
+		if (roam_event->rso_timer_stopped &&
+		    (roam_event->notif == CM_ROAM_NOTIF_SCAN_MODE_SUCCESS ||
+		     roam_event->notif == CM_ROAM_NOTIF_SCAN_MODE_FAIL))
+			wlan_cm_rso_stop_continue_disconnect(roam_event->psoc,
+						roam_event->vdev_id, false);
 		cm_rso_cmd_status_event_handler(roam_event->vdev_id,
 						roam_event->notif);
 		break;
@@ -2769,15 +2794,16 @@ cm_roam_stats_print_trigger_info(struct wmi_roam_trigger_info *data,
 	char *buf;
 	char time[TIME_STRING_LEN];
 
-	/* Update roam trigger info to userspace */
-	cm_roam_trigger_info_event(data, vdev_id, is_full_scan);
-
 	buf = qdf_mem_malloc(MAX_ROAM_DEBUG_BUF_SIZE);
 	if (!buf)
 		return;
 
 	cm_roam_stats_get_trigger_detail_str(data, buf, is_full_scan, vdev_id);
 	mlme_get_converted_timestamp(data->timestamp, time);
+
+	/* Update roam trigger info to userspace */
+	cm_roam_trigger_info_event(data, vdev_id, is_full_scan);
+
 	mlme_nofl_info("%s [ROAM_TRIGGER]: VDEV[%d] %s", time, vdev_id, buf);
 
 	qdf_mem_free(buf);
@@ -3309,3 +3335,22 @@ rel_ref:
 	return status;
 }
 #endif /* WLAN_FEATURE_FIPS */
+
+QDF_STATUS
+cm_cleanup_mlo_link(struct wlan_objmgr_vdev *vdev)
+{
+	QDF_STATUS status;
+
+	/* Use internal disconnect as this is for cleanup and no need
+	 * to inform OSIF, and REASON_FW_TRIGGERED_ROAM_FAILURE will
+	 * cleanup host without informing the FW
+	 */
+	status = wlan_cm_disconnect(vdev,
+				    CM_INTERNAL_DISCONNECT,
+				    REASON_FW_TRIGGERED_ROAM_FAILURE,
+				    NULL);
+	if (QDF_IS_STATUS_ERROR(status))
+		mlme_debug("Failed to post disconnect for link vdev");
+
+	return status;
+}

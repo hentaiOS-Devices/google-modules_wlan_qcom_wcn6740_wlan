@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1920,6 +1920,7 @@ static struct mlme_ext_ops ext_ops = {
 #ifdef WLAN_FEATURE_DYNAMIC_MAC_ADDR_UPDATE
 	.mlme_vdev_send_set_mac_addr = vdevmgr_mlme_vdev_send_set_mac_addr,
 #endif
+	.mlme_cm_ext_rso_stop_cb = cm_send_rso_stop,
 };
 
 #ifdef WLAN_FEATURE_11BE_MLO
@@ -1928,5 +1929,6 @@ static struct mlo_mlme_ext_ops mlo_ext_ops = {
 	.mlo_mlme_ext_peer_delete = lim_mlo_cleanup_partner_peer,
 	.mlo_mlme_ext_peer_assoc_fail = lim_mlo_ap_sta_assoc_fail,
 	.mlo_mlme_ext_assoc_resp = lim_mlo_ap_sta_assoc_suc,
+	.mlo_mlme_ext_handle_sta_csa_param = lim_handle_mlo_sta_csa_param,
 };
 #endif

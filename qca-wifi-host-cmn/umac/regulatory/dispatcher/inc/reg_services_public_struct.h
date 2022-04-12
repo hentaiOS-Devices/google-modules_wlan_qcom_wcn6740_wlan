@@ -636,7 +636,10 @@ struct freq_range {
  * @center_freq_seg1: channel number segment 1
  * @mhz_freq_seg0: Center frequency for segment 0
  * @mhz_freq_seg1: Center frequency for segment 1
- * @reg_punc_pattern: Output puncturing pattern
+ * @reg_punc_bitmap: Output puncturing bitmap
+ * @is_create_punc_bitmap: Whether puncturing bitmap is to be created or not
+ *                         Parameter 'reg_punc_bitmap' is valid only if
+ *                         is_create_punc_bitmap is true
  */
 struct ch_params {
 	enum phy_ch_width ch_width;
@@ -646,7 +649,8 @@ struct ch_params {
 	qdf_freq_t mhz_freq_seg0;
 	qdf_freq_t mhz_freq_seg1;
 #ifdef WLAN_FEATURE_11BE
-	uint16_t reg_punc_pattern;
+	uint16_t reg_punc_bitmap;
+	bool is_create_punc_bitmap;
 #endif
 };
 
@@ -1395,6 +1399,8 @@ enum restart_beaconing_on_ch_avoid_rule {
  * @retain_nol_across_regdmn_update: Retain the NOL list across the regdomain.
  * @coex_unsafe_chan_nb_user_prefer: Honor coex unsafe chan cmd from firmware or
  * userspace
+ * @coex_unsafe_chan_reg_disable: To disable reg channels for received coex
+ * unsafe channels list
  */
 struct reg_config_vars {
 	uint32_t enable_11d_support;
@@ -1411,6 +1417,7 @@ struct reg_config_vars {
 	bool retain_nol_across_regdmn_update;
 #ifdef FEATURE_WLAN_CH_AVOID_EXT
 	bool coex_unsafe_chan_nb_user_prefer;
+	bool coex_unsafe_chan_reg_disable;
 #endif
 };
 
@@ -1559,7 +1566,7 @@ struct ch_avoid_freq_type {
 struct ch_avoid_ind_type {
 	uint32_t ch_avoid_range_cnt;
 	struct ch_avoid_freq_type avoid_freq_range[CH_AVOID_MAX_RANGE];
-	uint8_t restriction_mask;
+	uint32_t restriction_mask;
 };
 
 /**

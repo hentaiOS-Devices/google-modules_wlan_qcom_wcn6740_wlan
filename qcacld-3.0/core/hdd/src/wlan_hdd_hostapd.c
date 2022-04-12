@@ -771,6 +771,9 @@ static int __hdd_hostapd_set_mac_address(struct net_device *dev, void *addr)
 		  dev->name);
 
 	if (adapter->vdev) {
+		if (!hdd_is_dynamic_set_mac_addr_allowed(adapter))
+			return -ENOTSUPP;
+
 		ret = hdd_dynamic_mac_address_set(hdd_ctx, adapter, mac_addr);
 		if (ret)
 			return ret;
@@ -3336,7 +3339,7 @@ int hdd_softap_set_channel_change(struct net_device *dev, int target_chan_freq,
  * Return: Restriction mask
  */
 static inline
-uint8_t wlan_hdd_get_sap_restriction_mask(struct hdd_context *hdd_ctx)
+uint32_t wlan_hdd_get_sap_restriction_mask(struct hdd_context *hdd_ctx)
 {
 	return hdd_ctx->coex_avoid_freq_list.restriction_mask;
 }
@@ -3358,7 +3361,7 @@ void wlan_hdd_fetch_sap_restriction_mask(struct hdd_context *hdd_ctx,
 }
 #else
 static inline
-uint8_t wlan_hdd_get_sap_restriction_mask(struct hdd_context *hdd_ctx)
+uint32_t wlan_hdd_get_sap_restriction_mask(struct hdd_context *hdd_ctx)
 {
 	return -EINVAL;
 }
@@ -3381,7 +3384,7 @@ void hdd_stop_sap_set_tx_power(struct wlan_objmgr_psoc *psoc,
 	struct wlan_regulatory_psoc_priv_obj *psoc_priv_obj;
 	int32_t set_tx_power, tx_power = 0;
 	struct sap_context *sap_ctx;
-	int8_t restriction_mask;
+	uint32_t restriction_mask;
 	int ch_loop, unsafe_chan_count;
 	struct unsafe_ch_list *unsafe_ch_list;
 	uint32_t chan_freq;
@@ -3404,7 +3407,7 @@ void hdd_stop_sap_set_tx_power(struct wlan_objmgr_psoc *psoc,
 		  sap_ctx->csa_reason);
 
 	if (sap_ctx->csa_reason == CSA_REASON_UNSAFE_CHANNEL) {
-		if (restriction_mask == NL80211_IFTYPE_AP) {
+		if (restriction_mask & BIT(NL80211_IFTYPE_AP)) {
 			schedule_work(&adapter->sap_stop_bss_work);
 		} else {
 			unsafe_chan_count = unsafe_ch_list->chan_cnt;
@@ -4138,6 +4141,7 @@ struct hdd_adapter *hdd_wlan_create_ap_dev(struct hdd_context *hdd_ctx,
 	qdf_mem_copy(adapter->mac_addr.bytes, mac_addr, sizeof(tSirMacAddr));
 
 	adapter->offloads_configured = false;
+	hdd_update_dynamic_tsf_sync(adapter);
 	hdd_dev_setup_destructor(dev);
 	dev->ieee80211_ptr = &adapter->wdev;
 	adapter->wdev.wiphy = hdd_ctx->wiphy;
@@ -6849,16 +6853,19 @@ wlan_hdd_update_twt_responder(struct hdd_context *hdd_ctx,
 			      struct cfg80211_ap_settings *params)
 {
 	bool twt_res_svc_cap, enable_twt;
+	uint32_t reason;
 
 	enable_twt = ucfg_mlme_is_twt_enabled(hdd_ctx->psoc);
 	ucfg_mlme_get_twt_res_service_cap(hdd_ctx->psoc, &twt_res_svc_cap);
 	ucfg_mlme_set_twt_responder(hdd_ctx->psoc, QDF_MIN(
 					twt_res_svc_cap,
 					(enable_twt && params->twt_responder)));
-	if (params->twt_responder)
+	if (params->twt_responder) {
 		hdd_send_twt_responder_enable_cmd(hdd_ctx);
-	else
-		hdd_send_twt_responder_disable_cmd(hdd_ctx);
+	} else {
+		reason = HOST_TWT_DISABLE_REASON_NONE;
+		hdd_send_twt_responder_disable_cmd(hdd_ctx, reason);
+	}
 }
 #else
 static inline void

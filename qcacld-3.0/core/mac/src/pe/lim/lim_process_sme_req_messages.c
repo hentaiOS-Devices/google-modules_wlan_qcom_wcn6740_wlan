@@ -2860,7 +2860,7 @@ static void lim_update_qos(struct mac_context *mac_ctx,
 		 session->limWmeEnabled);
 }
 
-static QDF_STATUS
+QDF_STATUS
 lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 		    struct bss_description *bss_desc)
 {
@@ -2886,6 +2886,9 @@ lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 	uint8_t programmed_country[REG_ALPHA2_LEN + 1];
 	enum reg_6g_ap_type power_type_6g;
 	bool ctry_code_match;
+	struct cm_roam_values_copy temp;
+	uint32_t neighbor_lookup_threshold;
+	uint32_t hi_rssi_scan_rssi_delta;
 
 	/*
 	 * Update the capability here itself as this is used in
@@ -2997,7 +3000,20 @@ lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 	lim_fill_11r_params(mac_ctx, session , ese_ver_present);
 	lim_fill_ese_params(mac_ctx, session, ese_ver_present);
 
-	if (WLAN_REG_IS_24GHZ_CH_FREQ(bss_desc->chan_freq)) {
+	wlan_cm_roam_cfg_get_value(mac_ctx->psoc, session->vdev_id,
+				   NEIGHBOUR_LOOKUP_THRESHOLD, &temp);
+	neighbor_lookup_threshold = temp.uint_value;
+
+	wlan_cm_roam_cfg_get_value(mac_ctx->psoc, session->vdev_id,
+				   HI_RSSI_SCAN_RSSI_DELTA, &temp);
+	hi_rssi_scan_rssi_delta = temp.uint_value;
+
+	if (WLAN_REG_IS_24GHZ_CH_FREQ(bss_desc->chan_freq) &&
+	    (abs(bss_desc->rssi) >
+	     (neighbor_lookup_threshold - hi_rssi_scan_rssi_delta))) {
+		pe_debug("Enabling HI_RSSI, rssi: %d lookup_th: %d, delta:%d",
+			 bss_desc->rssi, neighbor_lookup_threshold,
+			 hi_rssi_scan_rssi_delta);
 		wlan_cm_set_disable_hi_rssi(mac_ctx->pdev, session->vdev_id,
 					    false);
 	} else {
@@ -3988,8 +4004,8 @@ lim_cm_handle_join_req(struct cm_vdev_join_req *req)
 		       pe_session->vdev_id);
 		goto fail;
 	}
-	if (wlan_vdev_mlme_is_mlo_vdev(pe_session->vdev) &&
-	    !wlan_vdev_mlme_is_mlo_link_vdev(pe_session->vdev))
+
+	if (!wlan_vdev_mlme_is_mlo_link_vdev(pe_session->vdev))
 		lim_send_mlo_caps_ie(mac_ctx, pe_session,
 				     QDF_STA_MODE,
 				     pe_session->vdev_id);
@@ -4127,7 +4143,8 @@ static void lim_process_nb_disconnect_req(struct mac_context *mac_ctx,
 		break;
 	default:
 		/* Set reason REASON_UNSPEC_FAILURE for prop disassoc */
-		if (reason_code >= REASON_PROP_START)
+		if (reason_code >= REASON_PROP_START &&
+		    reason_code != REASON_FW_TRIGGERED_ROAM_FAILURE)
 			req->req.reason_code = REASON_UNSPEC_FAILURE;
 		lim_prepare_and_send_disassoc(mac_ctx, pe_session, req);
 	}

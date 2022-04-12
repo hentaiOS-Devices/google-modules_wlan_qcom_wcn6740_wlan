@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -1028,6 +1028,14 @@ static QDF_STATUS send_roam_invoke_cmd_tlv(wmi_unified_t wmi_handle,
 		cmd->flags |=
 			(1 << WMI_ROAM_INVOKE_FLAG_FULL_SCAN_IF_NO_CANDIDATE);
 		cmd->reason = ROAM_INVOKE_REASON_NUD_FAILURE;
+	} else if (qdf_is_macaddr_broadcast(&roaminvoke->target_bssid)) {
+		cmd->num_chan = 0;
+		cmd->num_bssid = 0;
+		cmd->roam_scan_mode = WMI_ROAM_INVOKE_SCAN_MODE_CACHE_MAP;
+		cmd->flags |=
+			(1 << WMI_ROAM_INVOKE_FLAG_FULL_SCAN_IF_NO_CANDIDATE) |
+			(1 << WMI_ROAM_INVOKE_FLAG_SELECT_CANDIDATE_CONSIDER_SCORE);
+		cmd->reason = ROAM_INVOKE_REASON_USER_SPACE;
 	} else {
 		cmd->reason = ROAM_INVOKE_REASON_USER_SPACE;
 	}
@@ -1993,7 +2001,9 @@ wmi_fill_roam_mlo_info(WMI_ROAM_SYNCH_EVENTID_param_tlvs *param_buf,
 			roam_sync_ind->ml_link[i].vdev_id = setup_links->vdev_id;
 			roam_sync_ind->ml_link[i].channel = setup_links->channel;
 			roam_sync_ind->ml_link[i].flags = setup_links->flags;
-			setup_links += sizeof(wmi_roam_ml_setup_links_param);
+			WMI_MAC_ADDR_TO_CHAR_ARRAY(&setup_links->link_addr,
+						   roam_sync_ind->ml_link[i].link_addr.bytes);
+			setup_links++;
 		}
 	}
 	if (param_buf->num_ml_key_material) {
@@ -2008,7 +2018,7 @@ wmi_fill_roam_mlo_info(WMI_ROAM_SYNCH_EVENTID_param_tlvs *param_buf,
 				     ml_key_param->pn, WMI_MAX_PN_LEN);
 			qdf_mem_copy(roam_sync_ind->ml_key[i].key_buff,
 				     ml_key_param->key_buff, WMI_MAX_KEY_LEN);
-			ml_key_param += sizeof(wmi_roam_ml_key_material_param);
+			ml_key_param++;
 		}
 	}
 }
@@ -2127,13 +2137,15 @@ wmi_fill_roam_sync_buffer(struct wlan_objmgr_vdev *vdev,
 			     REPLAY_CTR_LEN);
 	}
 
-	if (param_buf->hw_mode_transition_fixed_param)
+	if (param_buf->hw_mode_transition_fixed_param) {
 		wmi_extract_pdev_hw_mode_trans_ind(
 		    param_buf->hw_mode_transition_fixed_param,
 		    param_buf->wmi_pdev_set_hw_mode_response_vdev_mac_mapping,
 		    &roam_sync_ind->hw_mode_trans_ind);
-	else
+		roam_sync_ind->hw_mode_trans_present = true;
+	} else {
 		wmi_debug("hw_mode transition fixed param is NULL");
+	}
 
 	fils_info = param_buf->roam_fils_synch_info;
 	if (fils_info) {
@@ -2414,6 +2426,11 @@ extract_roam_sync_frame_event_tlv(wmi_unified_t wmi_handle, void *event,
 	roam_sync_frame_ind = frame_ptr;
 	roam_sync_frame_ind->vdev_id = synch_frame_event->vdev_id;
 
+	wmi_debug("synch frame payload: LEN bcn:%d, req:%d, rsp:%d",
+		  synch_frame_event->bcn_probe_rsp_len,
+		  synch_frame_event->reassoc_req_len,
+		  synch_frame_event->reassoc_rsp_len);
+
 	if (synch_frame_event->bcn_probe_rsp_len) {
 		roam_sync_frame_ind->bcn_probe_rsp_len =
 			synch_frame_event->bcn_probe_rsp_len;
@@ -2558,6 +2575,8 @@ wmi_convert_fw_notif_to_cm_notif(uint32_t fw_notif)
 		return CM_ROAM_NOTIF_DEAUTH_RECV;
 	case WMI_ROAM_NOTIF_DISASSOC_RECV:
 		return CM_ROAM_NOTIF_DISASSOC_RECV;
+	case WMI_ROAM_NOTIF_SCAN_MODE_SUCCESS_WITH_HO_FAIL:
+		return CM_ROAM_NOTIF_HO_FAIL;
 	case WMI_ROAM_NOTIF_SCAN_END:
 		return CM_ROAM_NOTIF_SCAN_END;
 	default:
@@ -4009,6 +4028,23 @@ wmi_fill_rso_start_scan_tlv(struct wlan_roam_scan_offload_params *rso_req,
 	return QDF_STATUS_SUCCESS;
 }
 
+#ifdef WLAN_FEATURE_11BE_MLO
+static void
+wmi_set_rso_stop_report_status(wmi_roam_scan_mode_fixed_param *rso_fp)
+{
+	/**
+	 * Set the REPORT status flag always, so that firmware sends RSO stop
+	 * status always
+	 */
+	rso_fp->flags |= WMI_ROAM_SCAN_MODE_FLAG_REPORT_STATUS;
+}
+#else
+static void
+wmi_set_rso_stop_report_status(wmi_roam_scan_mode_fixed_param *rso_fp)
+{
+}
+#endif
+
 /**
  * send_roam_scan_offload_mode_cmd_tlv() - send roam scan mode request to fw
  * @wmi_handle: wmi handle
@@ -4078,6 +4114,8 @@ send_roam_scan_offload_mode_cmd_tlv(
 		roam_scan_mode_fp->flags |=
 				WMI_ROAM_SCAN_MODE_FLAG_REPORT_STATUS;
 		goto send_roam_scan_mode_cmd;
+	} else {
+		wmi_set_rso_stop_report_status(roam_scan_mode_fp);
 	}
 
 	/* Fill in scan parameters suitable for roaming scan */

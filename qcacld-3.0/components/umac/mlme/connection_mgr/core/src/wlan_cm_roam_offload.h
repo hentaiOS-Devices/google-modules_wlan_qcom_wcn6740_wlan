@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -106,6 +106,8 @@ void cm_roam_result_info_event(struct wmi_roam_result *res,
  * @vdev_id: vdev id
  * @requested_state: roam state to be set
  * @reason: reason for changing roam state for the requested vdev id
+ * @send_resp: send rso stop response
+ * @start_timer: start timer for rso stop
  *
  * This function posts roam state change to roam state machine handling
  *
@@ -115,7 +117,7 @@ QDF_STATUS
 cm_roam_state_change(struct wlan_objmgr_pdev *pdev,
 		     uint8_t vdev_id,
 		     enum roam_offload_state requested_state,
-		     uint8_t reason);
+		     uint8_t reason, bool *send_resp, bool start_timer);
 
 /**
  * cm_handle_sta_sta_roaming_enablement() - To handle roaming in case
@@ -169,12 +171,14 @@ QDF_STATUS cm_rso_set_roam_trigger(struct wlan_objmgr_pdev *pdev,
  * @psoc: psoc pointer
  * @vdev_id: vdev id
  * @reason: reason for changing roam state for the requested vdev id
+ * @send_resp: send rso stop response
+ * @start_timer: start timer for rso stop
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS
 cm_roam_stop_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
-		 uint8_t reason);
+		 uint8_t reason, bool *send_resp, bool start_timer);
 
 /**
  * cm_roam_fill_rssi_change_params() - Fill roam scan rssi change parameters
@@ -362,6 +366,24 @@ bool cm_is_auth_type_11r(struct wlan_mlme_psoc_ext_obj *mlme_obj,
  */
 void cm_update_owe_info(struct wlan_objmgr_vdev *vdev,
 			struct wlan_cm_connect_resp *rsp, uint8_t vdev_id);
+
+#ifdef WLAN_FEATURE_11BE_MLO
+QDF_STATUS
+cm_handle_mlo_rso_state_change(struct wlan_objmgr_pdev *pdev,
+			       uint8_t *vdev_id,
+			       uint8_t reason,
+			       bool *is_rso_skip);
+#else
+static inline QDF_STATUS
+cm_handle_mlo_rso_state_change(struct wlan_objmgr_pdev *pdev,
+			       uint8_t *vdev_id,
+			       uint8_t reason,
+			       bool *is_rso_skip)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+#endif
 
 #if defined(WLAN_FEATURE_CONNECTIVITY_LOGGING) && \
 	defined(WLAN_FEATURE_ROAM_OFFLOAD)

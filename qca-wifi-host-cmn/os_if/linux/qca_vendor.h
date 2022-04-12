@@ -545,6 +545,11 @@
  *     various roam events to userspace.
  *     Applicable only for the STA mode. The attributes used with this command
  *     are defined in enum qca_wlan_vendor_attr_roam_events.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_RATEMASK_CONFIG: Sub-command to set or reset the
+ *     rate mask config for a list of phy types. Userspace shall provide
+ *     an array of the vendor attributes defined in
+ *     enum QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS.
  */
 
 enum qca_nl80211_vendor_subcmds {
@@ -784,6 +789,7 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_DIAG_DATA = 201,
 	QCA_NL80211_VENDOR_SUBCMD_SET_MONITOR_MODE = 202,
 	QCA_NL80211_VENDOR_SUBCMD_ROAM_EVENTS = 203,
+	QCA_NL80211_VENDOR_SUBCMD_RATEMASK_CONFIG = 204,
 };
 
 enum qca_wlan_vendor_tos {
@@ -4288,6 +4294,11 @@ enum wifi_logger_supported_features {
  * Used with event to notify the puncture pattern selected in ACS operation.
  * Encoding for this attribute will follow the convention used in the Disabled
  * Subchannel Bitmap field of the EHT Operation IE.
+ *
+ * @QCA_WLAN_VENDOR_ATTR_ACS_EHT_ENABLED: Flag attribute.
+ * Used with command to configure ACS operation for EHT mode.
+ * Disable (flag attribute not present) - EHT disabled and
+ * Enable (flag attribute present) - EHT enabled.
  */
 enum qca_wlan_vendor_attr_acs_offload {
 	QCA_WLAN_VENDOR_ATTR_ACS_CHANNEL_INVALID = 0,
@@ -4309,6 +4320,7 @@ enum qca_wlan_vendor_attr_acs_offload {
 	QCA_WLAN_VENDOR_ATTR_ACS_EDMG_ENABLED = 16,
 	QCA_WLAN_VENDOR_ATTR_ACS_EDMG_CHANNEL = 17,
 	QCA_WLAN_VENDOR_ATTR_ACS_PUNCTURE_BITMAP = 18,
+	QCA_WLAN_VENDOR_ATTR_ACS_EHT_ENABLED = 19,
 
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST,
@@ -5140,6 +5152,14 @@ enum qca_wlan_vendor_attr_rssi_monitoring {
  * QCA_WLAN_VENDOR_ATTR_NDP_TRANSPORT_PROTOCOL: Unsigned 8-bit value indicating
  * protocol used by NDP and assigned by the Internet Assigned Numbers Authority
  * as per: www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
+ * QCA_WLAN_VENDOR_ATTR_PEER_NDPE_SUPPORT: Unsigned 8-bit value indicating if
+ * NDP remote peer supports NAN NDPE. 1:support 0:not support
+ * QCA_WLAN_VENDOR_ATTR_NDP_SERVICE_ID: As per Wi-Fi Aware Specification v3.2
+ * Service Id is the first 48 bits of the SHA-256 hash of the Service Name.
+ * A lower-case representation of the Service Name shall be used to
+ * calculate the Service ID.
+ * Array of u8: length is 6 bytes
+ * This attribute is used and optional for ndp indication.
 */
 enum qca_wlan_vendor_attr_ndp_params {
 	QCA_WLAN_VENDOR_ATTR_NDP_PARAM_INVALID = 0,
@@ -5172,6 +5192,8 @@ enum qca_wlan_vendor_attr_ndp_params {
 	QCA_WLAN_VENDOR_ATTR_NDP_IPV6_ADDR = 27,
 	QCA_WLAN_VENDOR_ATTR_NDP_TRANSPORT_PORT = 28,
 	QCA_WLAN_VENDOR_ATTR_NDP_TRANSPORT_PROTOCOL = 29,
+	QCA_WLAN_VENDOR_ATTR_PEER_NDPE_SUPPORT = 30,
+	QCA_WLAN_VENDOR_ATTR_NDP_SERVICE_ID = 31,
 
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_NDP_PARAMS_AFTER_LAST,
@@ -5733,39 +5755,53 @@ enum qca_vendor_element_id {
 };
 
 /**
- * enum qca_vendor_attr_get_tsf: Vendor attributes for TSF capture
- * @QCA_WLAN_VENDOR_ATTR_TSF_INVALID: Invalid attribute value
- * @QCA_WLAN_VENDOR_ATTR_TSF_CMD: enum qca_tsf_operation (u32)
- * @QCA_WLAN_VENDOR_ATTR_TSF_TIMER_VALUE: Unsigned 64 bit TSF timer value
- * @QCA_WLAN_VENDOR_ATTR_TSF_SOC_TIMER_VALUE: Unsigned 64 bit Synchronized
- *	SOC timer value at TSF capture
- * @QCA_WLAN_VENDOR_ATTR_TSF_AFTER_LAST: after last
- * @QCA_WLAN_VENDOR_ATTR_TSF_MAX: Max value
+ * enum qca_vendor_attr_tsf_cmd: Vendor attributes for TSF capture
+ * @QCA_WLAN_VENDOR_ATTR_TSF_CMD: Required (u32)
+ * Specify the TSF command. Possible values are defined in
+ * &enum qca_tsf_cmd.
+ * @QCA_WLAN_VENDOR_ATTR_TSF_TIMER_VALUE: Optional (u64)
+ * This attribute contains TSF timer value. This attribute is only available
+ * in %QCA_TSF_GET or %QCA_TSF_SYNC_GET response.
+ * @QCA_WLAN_VENDOR_ATTR_TSF_SOC_TIMER_VALUE: Optional (u64)
+ * This attribute contains SOC timer value at TSF capture. This attribute is
+ * only available in %QCA_TSF_GET or %QCA_TSF_SYNC_GET response.
+ * @QCA_WLAN_VENDOR_ATTR_TSF_SYNC_INTERVAL: Optional (u32)
+ * This attribute is used to provide TSF sync interval and only applicable when
+ * TSF command is %QCA_TSF_SYNC_START. If this attribute is not provided, the
+ * driver will use the default value. Time unit is in milliseconds.
  */
 enum qca_vendor_attr_tsf_cmd {
 	QCA_WLAN_VENDOR_ATTR_TSF_INVALID = 0,
 	QCA_WLAN_VENDOR_ATTR_TSF_CMD,
 	QCA_WLAN_VENDOR_ATTR_TSF_TIMER_VALUE,
 	QCA_WLAN_VENDOR_ATTR_TSF_SOC_TIMER_VALUE,
+	QCA_WLAN_VENDOR_ATTR_TSF_SYNC_INTERVAL,
 	QCA_WLAN_VENDOR_ATTR_TSF_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_TSF_MAX =
-		QCA_WLAN_VENDOR_ATTR_TSF_AFTER_LAST - 1
+	QCA_WLAN_VENDOR_ATTR_TSF_AFTER_LAST - 1
 };
 
 /**
- * enum qca_tsf_operation: TSF driver commands
+ * enum qca_tsf_cmd: TSF driver commands
  * @QCA_TSF_CAPTURE: Initiate TSF Capture
  * @QCA_TSF_GET: Get TSF capture value
  * @QCA_TSF_SYNC_GET: Initiate TSF capture and return with captured value
  * @QCA_TSF_AUTO_REPORT_ENABLE: Used in STA mode only. Once set, the target
  * will automatically send TSF report to the host. To query
- * QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY, this operation needs to be
+ * %QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY, this operation needs to be
  * initiated first.
  * @QCA_TSF_AUTO_REPORT_DISABLE: Used in STA mode only. Once set, the target
  * will not automatically send TSF report to the host. If
- * QCA_TSF_AUTO_REPORT_ENABLE is initiated and
- * QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY is not queried anymore, this
+ * %QCA_TSF_AUTO_REPORT_ENABLE is initiated and
+ * %QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY is not queried anymore, this
  * operation needs to be initiated.
+ * @QCA_TSF_SYNC_START: Start periodic TSF sync feature. The driver periodically
+ * fetches TSF and host time mapping from the firmware with interval configured
+ * through the %QCA_WLAN_VENDOR_ATTR_TSF_SYNC_INTERVAL attribute. If the
+ * interval value is not provided the driver will use the default value. The
+ * userspace can query the TSF and host time mapping via the %QCA_TSF_GET
+ * command.
+ * @QCA_TSF_SYNC_STOP: Stop periodic TSF sync feature.
  */
 enum qca_tsf_cmd {
 	QCA_TSF_CAPTURE,
@@ -5773,6 +5809,8 @@ enum qca_tsf_cmd {
 	QCA_TSF_SYNC_GET,
 	QCA_TSF_AUTO_REPORT_ENABLE,
 	QCA_TSF_AUTO_REPORT_DISABLE,
+	QCA_TSF_SYNC_START,
+	QCA_TSF_SYNC_STOP,
 };
 
 /**
@@ -7801,8 +7839,9 @@ enum qca_wlan_vendor_attr_spectral_scan_status {
  *
  * @QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_NORMAL:
  *      Default WLAN operation level which throughput orientated.
- * @QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_MODERATE:
- *      Use moderate level to improve latency by limit scan duration.
+ * @QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_XR:
+ *      Use XR level to benefit XR (extended reality) application to achieve
+ *      latency and power by via constraint scan/roaming/adaptive PS.
  * @QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_LOW:
  *      Use low latency level to benifit application like concurrent
  *      downloading or video streaming via constraint scan/adaptive PS.
@@ -7813,7 +7852,10 @@ enum qca_wlan_vendor_attr_spectral_scan_status {
 enum qca_wlan_vendor_attr_config_latency_level {
 	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_INVALID = 0,
 	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_NORMAL = 1,
-	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_MODERATE = 2,
+	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_XR = 2,
+	/* legacy name */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_MODERATE =
+	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_XR,
 	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_LOW = 3,
 	QCA_WLAN_VENDOR_ATTR_CONFIG_LATENCY_LEVEL_ULTRALOW = 4,
 
@@ -12666,4 +12708,59 @@ enum qca_wlan_vendor_attr_roam_events {
 	QCA_WLAN_VENDOR_ATTR_ROAM_EVENTS_AFTER_LAST - 1,
 };
 
+/*
+ * enum qca_wlan_ratemask_params_type - Rate mask config type.
+ *
+ * @QCA_WLAN_RATEMASK_PARAMS_TYPE_CCK_OFDM: CCK_OFDM rate mask config
+ * @QCA_WLAN_RATEMASK_PARAMS_TYPE_HT: HT rate mask config
+ * @QCA_WLAN_RATEMASK_PARAMS_TYPE_VHT: VHT rate mask config
+ * @QCA_WLAN_RATEMASK_PARAMS_TYPE_HE: HE rate mask config
+ */
+enum qca_wlan_ratemask_params_type {
+	QCA_WLAN_RATEMASK_PARAMS_TYPE_CCK_OFDM = 0,
+	QCA_WLAN_RATEMASK_PARAMS_TYPE_HT = 1,
+	QCA_WLAN_RATEMASK_PARAMS_TYPE_VHT = 2,
+	QCA_WLAN_RATEMASK_PARAMS_TYPE_HE = 3,
+};
+
+/* enum qca_wlan_vendor_attr_ratemask_params - Used by the
+ * vendor command QCA_NL80211_VENDOR_SUBCMD_RATEMASK_CONFIG.
+ * This is used to set the rate mask value to be used in rate selection.
+ *
+ * @QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_LIST:
+ * Array of nested containing attributes
+ * QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_TYPE and
+ * QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_BITMAP.
+ *
+ * @QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_TYPE: u8, represents
+ * the different phy types to which the rate mask config is to be applied.
+ * The values for this attribute are referred from enum
+ * qca_wlan_vendor_ratemask_params_type.
+ *
+ * @QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_BITMAP: binary, rate mask bitmap.
+ * A bit value of 1 represents rate is enabled and a value of 0
+ * represents rate is disabled.
+ * For HE targets, 12 bits correpond to one NSS setting.
+ * b0-13  => NSS1, MCS 0-13
+ * b14-27 => NSS2, MCS 0-13 and so on for other NSS.
+ * For VHT targets, 10 bits correspond to one NSS setting.
+ * b0-9   => NSS1, MCS 0-9
+ * b10-19 => NSS2, MCS 0-9 and so on for other NSS.
+ * For HT targets, 8 bits correspond to one NSS setting.
+ * b0-7  => NSS1, MCS 0-7
+ * b8-15 => NSS2, MCS 0-7 and so on for other NSS.
+ * For OFDM/CCK targets, 8 bits correspond to one NSS setting.
+ */
+
+enum qca_wlan_vendor_attr_ratemask_params {
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_INVALID = 0,
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_LIST = 1,
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_TYPE = 2,
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_BITMAP = 3,
+
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_MAX =
+	QCA_WLAN_VENDOR_ATTR_RATEMASK_PARAMS_AFTER_LAST - 1,
+};
 #endif
