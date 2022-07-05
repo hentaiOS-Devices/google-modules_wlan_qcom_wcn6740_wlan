@@ -434,7 +434,6 @@ typedef enum eSirResultCodes {
 	eSIR_SME_DEAUTH_STATUS,
 	eSIR_PNO_SCAN_SUCCESS,
 	eSIR_SME_INVALID_SESSION,
-	eSIR_SME_PEER_CREATE_FAILED,
 	eSIR_DONOT_USE_RESULT_CODE = SIR_MAX_ENUM_SIZE
 } tSirResultCodes;
 
@@ -5198,6 +5197,12 @@ struct sir_sae_info {
  * @vdev_id: vdev id
  * @sae_status: SAE status, 0: Success, Non-zero: Failure.
  * @peer_mac_addr: peer MAC address
+ * @result_code: This carries the reason of the SAE auth failure.
+ *               Currently, SAE authentication failure may happen due to
+ *               1. Authentication failure detected as part of SAE auth frame
+ *                  exchanges and validation.
+ *               2. Deauth received from AP while SAE authentication is in
+ *                  progress.
  */
 struct sir_sae_msg {
 	uint16_t message_type;
@@ -5205,6 +5210,7 @@ struct sir_sae_msg {
 	uint16_t vdev_id;
 	uint8_t sae_status;
 	tSirMacAddr peer_mac_addr;
+	tSirResultCodes result_code;
 };
 
 #ifdef WLAN_FEATURE_MOTION_DETECTION

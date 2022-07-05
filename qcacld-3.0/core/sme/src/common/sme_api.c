@@ -562,6 +562,34 @@ QDF_STATUS sme_ser_handle_active_cmd(struct wlan_serialization_command *cmd)
 	return status;
 }
 
+static void sme_dump_peer_disconnect_timeout_info(tSmeCmd *sme_cmd)
+{
+	struct wmstatus_changecmd *wms_cmd;
+	struct qdf_mac_addr peer_macaddr = QDF_MAC_ADDR_ZERO_INIT;
+
+	if (sme_cmd->command == eSmeCommandRoam &&
+	    (sme_cmd->u.roamCmd.roamReason == eCsrForcedDisassocSta ||
+	    sme_cmd->u.roamCmd.roamReason == eCsrForcedDeauthSta)) {
+		qdf_mem_copy(peer_macaddr.bytes, sme_cmd->u.roamCmd.peerMac,
+			     QDF_MAC_ADDR_SIZE);
+	} else if (sme_cmd->command == eSmeCommandWmStatusChange) {
+		wms_cmd = &sme_cmd->u.wmStatusChangeCmd;
+		if (wms_cmd->Type == eCsrDisassociated)
+			qdf_copy_macaddr(
+				&peer_macaddr,
+				&wms_cmd->u.DisassocIndMsg.peer_macaddr);
+		else if (wms_cmd->Type == eCsrDeauthenticated)
+			qdf_copy_macaddr(
+				&peer_macaddr,
+				&wms_cmd->u.DeauthIndMsg.peer_macaddr);
+	}
+
+	if (!qdf_is_macaddr_zero(&peer_macaddr))
+		sme_err("vdev %d cmd %d timeout for peer " QDF_MAC_ADDR_FMT,
+			sme_cmd->vdev_id, sme_cmd->command,
+			QDF_MAC_ADDR_REF(peer_macaddr.bytes));
+}
+
 QDF_STATUS sme_ser_cmd_callback(struct wlan_serialization_command *cmd,
 				enum wlan_serialization_cb_reason reason)
 {
@@ -601,9 +629,11 @@ QDF_STATUS sme_ser_cmd_callback(struct wlan_serialization_command *cmd,
 	case WLAN_SER_CB_ACTIVE_CMD_TIMEOUT:
 		sme_cmd = cmd->umac_cmd;
 		if (sme_cmd && (sme_cmd->command == eSmeCommandRoam ||
-		    sme_cmd->command == eSmeCommandWmStatusChange))
+		    sme_cmd->command == eSmeCommandWmStatusChange)) {
+			sme_dump_peer_disconnect_timeout_info(sme_cmd);
 			qdf_trigger_self_recovery(mac_ctx->psoc,
 						  QDF_ACTIVE_LIST_TIMEOUT);
+		}
 		break;
 	default:
 		sme_debug("unknown reason code");
@@ -7499,14 +7529,64 @@ sme_del_periodic_tx_ptrn(mac_handle_t mac_handle,
 	return status;
 }
 
+#ifdef MULTI_CLIENT_LL_SUPPORT
+QDF_STATUS sme_multi_client_ll_rsp_register_callback(mac_handle_t mac_handle,
+				void (*latency_level_event_handler_cb)
+				(const struct latency_level_data *event_data,
+				 uint8_t vdev_id))
+{
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct mac_context *mac = MAC_CONTEXT(mac_handle);
+
+	status = sme_acquire_global_lock(&mac->sme);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		mac->sme.latency_level_event_handler_cb =
+				latency_level_event_handler_cb;
+		sme_release_global_lock(&mac->sme);
+	}
+
+	return status;
+}
+
+void sme_multi_client_ll_rsp_deregister_callback(mac_handle_t mac_handle)
+{
+	sme_multi_client_ll_rsp_register_callback(mac_handle, NULL);
+}
+
+/**
+ * sme_fill_multi_client_info() - Fill multi client info
+ * @param:latency leevel param
+ * @client_id_bitmap: bitmap for host clients
+ * @force_reset: force reset bit to clear latency level for all clients
+ *
+ * Return: none
+ */
+static void
+sme_fill_multi_client_info(struct wlm_latency_level_param *params,
+			   uint32_t client_id_bitmap, bool force_reset)
+{
+	params->client_id_bitmask = client_id_bitmap;
+	params->force_reset = force_reset;
+}
+#else
+static inline void
+sme_fill_multi_client_info(struct wlm_latency_level_param *params,
+			   uint32_t client_id_bitmap, bool force_reset)
+{
+}
+#endif
+
 QDF_STATUS sme_set_wlm_latency_level(mac_handle_t mac_handle,
-				     uint16_t session_id,
-				     uint16_t latency_level)
+				uint16_t session_id, uint16_t latency_level,
+				uint32_t client_id_bitmap,
+				bool force_reset)
 {
 	QDF_STATUS status;
 	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
 	struct wlm_latency_level_param params;
 	void *wma = cds_get_context(QDF_MODULE_ID_WMA);
+
+	SME_ENTER();
 
 	if (!wma)
 		return QDF_STATUS_E_FAILURE;
@@ -7526,6 +7606,7 @@ QDF_STATUS sme_set_wlm_latency_level(mac_handle_t mac_handle,
 	params.wlm_latency_flags =
 		mac_ctx->mlme_cfg->wlm_config.latency_flags[latency_level];
 	params.vdev_id = session_id;
+	sme_fill_multi_client_info(&params, client_id_bitmap, force_reset);
 
 	status = wma_set_wlm_latency_level(wma, &params);
 
@@ -11568,14 +11649,24 @@ sme_update_session_txq_edca_params(mac_handle_t mac_handle,
 	QDF_STATUS status;
 	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
 	struct sir_update_session_txq_edca_param *msg;
+	struct pe_session *pe_session;
+
+	pe_session = pe_find_session_by_vdev_id(mac_ctx, session_id);
+	if (!pe_session) {
+		pe_warn("Session does not exist for given session_id %d",
+			session_id);
+		return QDF_STATUS_E_INVAL;
+	}
 
 	status = sme_acquire_global_lock(&mac_ctx->sme);
 	if (QDF_IS_STATUS_ERROR(status))
 		return QDF_STATUS_E_AGAIN;
 
 	msg = qdf_mem_malloc(sizeof(*msg));
-	if (!msg)
+	if (!msg) {
+		sme_release_global_lock(&mac_ctx->sme);
 		return QDF_STATUS_E_NOMEM;
+	}
 
 	msg->message_type = eWNI_SME_UPDATE_SESSION_EDCA_TXQ_PARAMS;
 	msg->vdev_id = session_id;
@@ -11588,6 +11679,8 @@ sme_update_session_txq_edca_params(mac_handle_t mac_handle,
 	sme_release_global_lock(&mac_ctx->sme);
 	if (status != QDF_STATUS_SUCCESS)
 		return QDF_STATUS_E_IO;
+
+	pe_session->user_edca_set = 1;
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -13667,7 +13760,7 @@ QDF_STATUS sme_add_dialog_cmd(mac_handle_t mac_handle,
 	usr_cfg_ps_enable = mlme_get_user_ps(mac->psoc, twt_params->vdev_id);
 	if (!usr_cfg_ps_enable) {
 		sme_debug("Power save mode disable");
-		return QDF_STATUS_E_INVAL;
+		return QDF_STATUS_E_AGAIN;
 	}
 
 	is_twt_notify_in_progress = mlme_is_twt_notify_in_progress(
@@ -14690,6 +14783,7 @@ QDF_STATUS sme_handle_sae_msg(mac_handle_t mac_handle,
 		sae_msg->length = sizeof(*sae_msg);
 		sae_msg->vdev_id = session_id;
 		sae_msg->sae_status = sae_status;
+		sae_msg->result_code = eSIR_SME_AUTH_REFUSED;
 		qdf_mem_copy(sae_msg->peer_mac_addr,
 			     peer_mac_addr.bytes,
 			     QDF_MAC_ADDR_SIZE);

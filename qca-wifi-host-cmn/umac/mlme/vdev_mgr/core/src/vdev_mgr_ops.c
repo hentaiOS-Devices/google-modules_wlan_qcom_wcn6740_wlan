@@ -209,12 +209,12 @@ vdev_mgr_start_param_update_11be(struct vdev_mlme_obj *mlme_obj,
 				 struct wlan_channel *des_chan)
 {
 	param->eht_ops = mlme_obj->proto.eht_ops_info.eht_ops;
-	param->channel.puncture_pattern = ~des_chan->puncture_bitmap;
+	param->channel.puncture_bitmap = des_chan->puncture_bitmap;
 }
 
 static inline void
-vdev_mgr_set_cur_chan_punc_pattern(struct wlan_channel *des_chan,
-				   uint16_t *puncture_bitmap)
+vdev_mgr_set_cur_chan_punc_bitmap(struct wlan_channel *des_chan,
+				  uint16_t *puncture_bitmap)
 {
 	*puncture_bitmap = des_chan->puncture_bitmap;
 }
@@ -227,21 +227,21 @@ vdev_mgr_start_param_update_11be(struct vdev_mlme_obj *mlme_obj,
 }
 
 static inline void
-vdev_mgr_set_cur_chan_punc_pattern(struct wlan_channel *des_chan,
-				   uint16_t *puncture_bitmap)
+vdev_mgr_set_cur_chan_punc_bitmap(struct wlan_channel *des_chan,
+				  uint16_t *puncture_bitmap)
 {
 	*puncture_bitmap = 0;
 }
 #endif
 
 #ifdef WLAN_FEATURE_11BE_MLO
-#ifdef WLAN_MLO_MCAST
+#ifdef WLAN_MCAST_MLO
 static inline void
 vdev_mgr_start_param_update_mlo_mcast(struct wlan_objmgr_vdev *vdev,
 				      struct vdev_start_params *param)
 {
 	if (wlan_vdev_mlme_is_mlo_mcast_vdev(vdev))
-		param->mlo_flags.mlo_macst_vdev = 1;
+		param->mlo_flags.mlo_mcast_vdev = 1;
 }
 #else
 #define vdev_mgr_start_param_update_mlo_mcast(vdev, param)
@@ -379,7 +379,7 @@ static QDF_STATUS vdev_mgr_start_param_update(
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
 	if (vdev_mgr_is_opmode_sap_or_p2p_go(op_mode) &&
 	    vdev_mgr_is_49G_5G_chan_freq(des_chan->ch_freq)) {
-		vdev_mgr_set_cur_chan_punc_pattern(des_chan, &puncture_bitmap);
+		vdev_mgr_set_cur_chan_punc_bitmap(des_chan, &puncture_bitmap);
 		tgt_dfs_set_current_channel_for_freq(pdev, des_chan->ch_freq,
 						     des_chan->ch_flags,
 						     des_chan->ch_flagext,

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -860,6 +860,7 @@ struct hal_hw_txrx_ops {
 	bool (*hal_rx_msdu_flow_idx_invalid)(uint8_t *buf);
 	bool (*hal_rx_msdu_flow_idx_timeout)(uint8_t *buf);
 	uint32_t (*hal_rx_msdu_fse_metadata_get)(uint8_t *buf);
+	bool (*hal_rx_msdu_cce_match_get)(uint8_t *buf);
 	uint16_t (*hal_rx_msdu_cce_metadata_get)(uint8_t *buf);
 	void
 	    (*hal_rx_msdu_get_flow_params)(
@@ -896,6 +897,7 @@ struct hal_hw_txrx_ops {
 					      uint32_t num_rings,
 					      uint32_t *remap1,
 					      uint32_t *remap2);
+	void (*hal_compute_reo_remap_ix0)(uint32_t *remap0);
 	uint32_t (*hal_rx_flow_setup_cmem_fse)(
 				struct hal_soc *soc, uint32_t cmem_ba,
 				uint32_t table_offset, uint8_t *rx_flow);
@@ -1016,6 +1018,9 @@ struct hal_hw_txrx_ops {
 					    uint32_t tlv, int *num_ref);
 	uint8_t (*hal_get_tlv_hdr_size)(void);
 	uint8_t (*hal_get_idle_link_bm_id)(uint8_t chip_id);
+#ifdef WLAN_FEATURE_MARK_FIRST_WAKEUP_PACKET
+	uint8_t (*hal_get_first_wow_wakeup_packet)(uint8_t *buf);
+#endif
 };
 
 /**

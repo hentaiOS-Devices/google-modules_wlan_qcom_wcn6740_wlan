@@ -111,6 +111,8 @@ void hdd_twt_del_dialog_in_ps_disable(struct hdd_context *hdd_ctx,
 				      struct qdf_mac_addr *mac_addr,
 				      uint8_t vdev_id)
 {
+	return osif_twt_teardown_in_ps_disable(hdd_ctx->psoc, mac_addr,
+					       vdev_id);
 }
 
 void hdd_send_twt_role_disable_cmd(struct hdd_context *hdd_ctx,
@@ -257,6 +259,9 @@ static int hdd_twt_configure(struct hdd_adapter *adapter,
 	case QCA_WLAN_TWT_CLEAR_STATS:
 		ret = osif_twt_clear_session_traffic_stats(vdev,
 							   twt_param_attr);
+		break;
+	case QCA_WLAN_TWT_SET_PARAM:
+		ret = osif_twt_set_param(vdev, twt_param_attr);
 		break;
 	default:
 		hdd_err("Invalid TWT Operation");
@@ -4655,6 +4660,8 @@ void __hdd_twt_update_work_handler(struct hdd_context *hdd_ctx)
 	hdd_debug("Total connection %d, sta_count %d, sap_count %d",
 		  num_connections, sta_count, sap_count);
 	switch (num_connections) {
+	case 0:
+		break;
 	case 1:
 		if (sta_count == 1) {
 			hdd_send_twt_requestor_enable_cmd(hdd_ctx);
@@ -4727,7 +4734,7 @@ void __hdd_twt_update_work_handler(struct hdd_context *hdd_ctx)
 		}
 		break;
 	default:
-		hdd_err("Unexpected number of connection");
+		hdd_debug("Unexpected number of connection");
 		break;
 	}
 }

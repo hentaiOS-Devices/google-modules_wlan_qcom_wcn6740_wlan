@@ -255,6 +255,27 @@ policy_mgr_get_sta_sap_scc_on_dfs_chnl(struct wlan_objmgr_psoc *psoc,
 				       uint8_t *sta_sap_scc_on_dfs_chnl);
 
 /**
+ * policy_mgr_get_sta_sap_scc_allowed_on_indoor_chnl() - Get if STA-SAP scc is
+ * allowed on indoor channel
+ * @psoc: Global psoc pointer
+ *
+ * Return: true if STA-SAP SCC on indoor channel is allowed
+ */
+bool policy_mgr_get_sta_sap_scc_allowed_on_indoor_chnl(
+				struct wlan_objmgr_psoc *psoc);
+
+/*
+ * policy_mgr_get_connected_vdev_band_mask() - to get the connected vdev band
+ * mask
+ * @vdev: pointer to vdev
+ *
+ * This API is used to get band of the frequency.
+ *
+ * Return: band mask of the frequency associated with the vdev
+ */
+uint32_t policy_mgr_get_connected_vdev_band_mask(struct wlan_objmgr_vdev *vdev);
+
+/**
  * policy_mgr_get_dfs_master_dynamic_enabled() - support dfs master or not
  * on AP interafce when STA+SAP(GO) concurrency
  * @psoc: pointer to psoc
@@ -3373,6 +3394,7 @@ bool policy_mgr_go_scc_enforced(struct wlan_objmgr_psoc *psoc);
  *
  * This function checks & updates the channel SAP to come up on in
  * case of STA+SAP concurrency
+ *
  * Return: Success if SAP can come up on a channel
  */
 QDF_STATUS policy_mgr_valid_sap_conc_channel_check(
@@ -3404,11 +3426,23 @@ bool policy_mgr_sap_allowed_on_indoor_freq(struct wlan_objmgr_psoc *psoc,
  * @sap_ch_freq: sap channel frequency.
  *
  * This function returns an alternate channel for SAP to move to
+ *
  * Return: The new channel for SAP
  */
 uint32_t policy_mgr_get_alternate_channel_for_sap(
 	struct wlan_objmgr_psoc *psoc, uint8_t sap_vdev_id,
 	uint32_t sap_ch_freq);
+
+/**
+ * policy_mgr_con_mode_by_vdev_id() - Get policy mgr con mode from vdev id
+ * @psoc: psoc object
+ * @vdev_id: vdev id
+ *
+ * return: enum policy_mgr_con_mode for the vdev id
+ */
+enum policy_mgr_con_mode
+policy_mgr_con_mode_by_vdev_id(struct wlan_objmgr_psoc *psoc,
+			       uint8_t vdev_id);
 
 /**
  * policy_mgr_disallow_mcc() - Check for mcc
@@ -4089,6 +4123,28 @@ bool policy_mgr_is_mlo_in_mode_sbs(struct wlan_objmgr_psoc *psoc,
 				   enum policy_mgr_con_mode mode,
 				   uint8_t *mlo_vdev_lst, uint8_t *num_mlo);
 
+/*
+ * policy_mgr_handle_sap_mlo_sta_concurrency() - Handle SAP MLO STA concurrency
+ *                                             such as:
+ *       1) If MLO STA is present with both links in 5/6 Ghz then SAP comes up
+ *          on 2.4 Ghz, then Disable one of the links
+ *       2) If MLO STA is present with both links in 5/6 Ghz and SAP, which was
+ *          present on 2.4 ghz, stops then renable both the as one of the links
+ *          were disabled because of sap on 2.4 ghz.
+ *
+ * @vdev: vdev mlme object
+ * @is_ap_up: bool to represent sap state
+ *
+ * Return: Void
+ */
+void policy_mgr_handle_sap_mlo_sta_concurrency(struct wlan_objmgr_psoc *psoc,
+					       struct wlan_objmgr_vdev *vdev,
+					       bool is_ap_up);
+
+void policy_mgr_handle_ml_sta_link_concurrency(struct wlan_objmgr_psoc *psoc,
+					       struct wlan_objmgr_vdev *vdev,
+					       bool is_connect);
+
 #else
 
 static inline bool policy_mgr_is_mlo_sap_concurrency_allowed(
@@ -4115,6 +4171,20 @@ bool policy_mgr_is_mlo_in_mode_sbs(struct wlan_objmgr_psoc *psoc,
 				   uint8_t *mlo_vdev_lst, uint8_t *num_mlo)
 {
 	return false;
+}
+
+static inline
+void policy_mgr_handle_sap_mlo_sta_concurrency(struct wlan_objmgr_psoc *psoc,
+					       struct wlan_objmgr_vdev *vdev,
+					       bool is_ap_up)
+{
+}
+
+static inline
+void policy_mgr_handle_ml_sta_link_concurrency(struct wlan_objmgr_psoc *psoc,
+					       struct wlan_objmgr_vdev *vdev,
+					       bool is_connect)
+{
 }
 #endif
 
@@ -4163,4 +4233,17 @@ void policy_mgr_set_dbs_cap_ut(struct wlan_objmgr_psoc *psoc, uint32_t dbs);
 static inline void
 policy_mgr_set_dbs_cap_ut(struct wlan_objmgr_psoc *psoc, uint32_t dbs) {}
 #endif
+
+/**
+ * policy_mgr_get_connected_roaming_vdev_band_mask() - get connected vdev
+ * band mask
+ * @psoc: PSOC object
+ * @vdev_id: Vdev id
+ *
+ * Return: reg wifi band mask
+ */
+uint32_t
+policy_mgr_get_connected_roaming_vdev_band_mask(struct wlan_objmgr_psoc *psoc,
+						uint8_t vdev_id);
+
 #endif /* __WLAN_POLICY_MGR_API_H */

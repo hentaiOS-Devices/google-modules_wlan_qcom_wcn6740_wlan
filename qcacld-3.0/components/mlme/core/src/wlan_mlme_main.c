@@ -1537,6 +1537,20 @@ mlme_init_product_details_cfg(struct wlan_mlme_product_details_cfg
 		      sizeof(product_details->model_number));
 }
 
+#ifdef WLAN_FEATURE_11BE_MLO
+static void mlme_init_sta_mlo_cfg(struct wlan_objmgr_psoc *psoc,
+				  struct wlan_mlme_sta_cfg *sta)
+{
+	sta->single_link_mlo_conn =
+		cfg_default(CFG_SINGLE_LINK_MLO_CONN);
+}
+#else
+static void mlme_init_sta_mlo_cfg(struct wlan_objmgr_psoc *psoc,
+				  struct wlan_mlme_sta_cfg *sta)
+{
+}
+#endif
+
 static void mlme_init_sta_cfg(struct wlan_objmgr_psoc *psoc,
 			      struct wlan_mlme_sta_cfg *sta)
 {
@@ -1576,6 +1590,7 @@ static void mlme_init_sta_cfg(struct wlan_objmgr_psoc *psoc,
 	sta->allow_tpc_from_ap = cfg_get(psoc, CFG_TX_POWER_CTRL);
 	sta->sta_keepalive_method =
 		cfg_get(psoc, CFG_STA_KEEPALIVE_METHOD);
+	mlme_init_sta_mlo_cfg(psoc, sta);
 }
 
 static void mlme_init_stats_cfg(struct wlan_objmgr_psoc *psoc,
@@ -2240,6 +2255,38 @@ mlme_init_roam_score_config(struct wlan_objmgr_psoc *psoc,
 
 }
 
+#ifdef MULTI_CLIENT_LL_SUPPORT
+static void
+mlme_init_wlm_multi_client_ll_support(struct wlan_objmgr_psoc *psoc,
+				      struct wlan_mlme_fe_wlm *wlm_config)
+{
+	wlm_config->multi_client_ll_support =
+			cfg_get(psoc, CFG_WLM_MULTI_CLIENT_LL_SUPPORT);
+}
+
+QDF_STATUS
+mlme_get_cfg_multi_client_ll_ini_support(struct wlan_objmgr_psoc *psoc,
+					 bool *multi_client_ll_support)
+{
+	struct wlan_mlme_psoc_ext_obj *mlme_obj;
+
+	mlme_obj = mlme_get_psoc_ext_obj(psoc);
+	if (!mlme_obj)
+		return QDF_STATUS_E_FAILURE;
+
+	*multi_client_ll_support =
+			mlme_obj->cfg.wlm_config.multi_client_ll_support;
+
+	return QDF_STATUS_SUCCESS;
+}
+#else
+static inline void
+mlme_init_wlm_multi_client_ll_support(struct wlan_objmgr_psoc *psoc,
+				      struct wlan_mlme_fe_wlm *wlm_config)
+{
+}
+#endif
+
 /**
  * mlme_init_fe_wlm_in_cfg() - Populate WLM INI in MLME cfg
  * @psoc: pointer to the psoc object
@@ -2256,6 +2303,7 @@ static void mlme_init_fe_wlm_in_cfg(struct wlan_objmgr_psoc *psoc,
 	wlm_config->latency_enable = cfg_get(psoc, CFG_LATENCY_ENABLE);
 	wlm_config->latency_reset = cfg_get(psoc, CFG_LATENCY_RESET);
 	wlm_config->latency_level = cfg_get(psoc, CFG_LATENCY_LEVEL);
+	mlme_init_wlm_multi_client_ll_support(psoc, wlm_config);
 
 	status = qdf_uint64_parse(cfg_get(psoc, CFG_LATENCY_FLAGS_NORMAL),
 				  &flags);

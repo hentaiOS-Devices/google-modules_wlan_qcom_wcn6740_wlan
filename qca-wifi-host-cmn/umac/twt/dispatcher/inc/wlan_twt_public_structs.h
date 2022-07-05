@@ -851,12 +851,25 @@ struct twt_resume_dialog_complete_event_param {
 	uint32_t status;
 };
 
+/* enum HOST_TWT_NOTIFY_STATUS - status code of notify TWT event
+ * @HOST_TWT_NOTIFY_EVENT_READY: FW is ready to process the TWT setup request.
+ * @HOST_TWT_NOTIFY_EVENT_AP_TWT_REQ_BIT_SET: AP set the TWT required bit
+ * @HOST_TWT_NOTIFY_EVENT_AP_TWT_REQ_BIT_CLEAR: AP cleared the TWT required bit
+ */
+enum HOST_TWT_NOTIFY_STATUS {
+	HOST_TWT_NOTIFY_EVENT_READY,
+	HOST_TWT_NOTIFY_EVENT_AP_TWT_REQ_BIT_SET,
+	HOST_TWT_NOTIFY_EVENT_AP_TWT_REQ_BIT_CLEAR,
+};
+
 /**
  * struct twt_notify_event_param -
  * @vdev_id: VDEV identifier
+ * @status: refer to HOST_TWT_NOTIFY_STATUS
  */
 struct twt_notify_event_param {
 	uint32_t vdev_id;
+	enum HOST_TWT_NOTIFY_STATUS status;
 };
 
 #ifdef WLAN_SUPPORT_BCAST_TWT
@@ -979,6 +992,15 @@ enum HOST_TWT_CMD_FOR_ACK_EVENT {
 	HOST_TWT_RESUME_DIALOG_CMDID,
 	HOST_TWT_NUDGE_DIALOG_CMDID,
 	HOST_TWT_UNKNOWN_CMDID,
+};
+
+/* access categories */
+enum twt_traffic_ac {
+	TWT_AC_VO  = 0,
+	TWT_AC_VI  = 1,
+	TWT_AC_BE  = 2,
+	TWT_AC_BK  = 3,
+	TWT_AC_MAX = 4,
 };
 
 #endif /* _WLAN_TWT_PUBLIC_STRUCTS_H_ */

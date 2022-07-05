@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -2388,6 +2388,42 @@ dp_queue_mon_ring_stats(struct dp_pdev *pdev,
 }
 #endif
 
+#ifndef WLAN_DP_DISABLE_TCL_CMD_CRED_SRNG
+static inline QDF_STATUS
+dp_get_tcl_cmd_cred_ring_state_from_hal(struct dp_pdev *pdev,
+					struct dp_srng_ring_state *ring_state)
+{
+	return dp_get_srng_ring_state_from_hal(pdev->soc, pdev,
+					       &pdev->soc->tcl_cmd_credit_ring,
+					       TCL_CMD_CREDIT, ring_state);
+}
+#else
+static inline QDF_STATUS
+dp_get_tcl_cmd_cred_ring_state_from_hal(struct dp_pdev *pdev,
+					struct dp_srng_ring_state *ring_state)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
+#ifndef WLAN_DP_DISABLE_TCL_STATUS_SRNG
+static inline QDF_STATUS
+dp_get_tcl_status_ring_state_from_hal(struct dp_pdev *pdev,
+				      struct dp_srng_ring_state *ring_state)
+{
+	return dp_get_srng_ring_state_from_hal(pdev->soc, pdev,
+					       &pdev->soc->tcl_status_ring,
+					       TCL_STATUS, ring_state);
+}
+#else
+static inline QDF_STATUS
+dp_get_tcl_status_ring_state_from_hal(struct dp_pdev *pdev,
+				      struct dp_srng_ring_state *ring_state)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
 /**
  * dp_queue_srng_ring_stats(): Print pdev hal level ring stats
  * @pdev: DP_pdev handle
@@ -2456,21 +2492,13 @@ static void dp_queue_ring_stats(struct dp_pdev *pdev)
 	if (status == QDF_STATUS_SUCCESS)
 		qdf_assert_always(++j < DP_MAX_SRNGS);
 
-	status = dp_get_srng_ring_state_from_hal
-				(pdev->soc, pdev,
-				 &pdev->soc->tcl_cmd_credit_ring,
-				 TCL_CMD_CREDIT,
-				 &soc_srngs_state->ring_state[j]);
-
+	status = dp_get_tcl_cmd_cred_ring_state_from_hal
+				(pdev, &soc_srngs_state->ring_state[j]);
 	if (status == QDF_STATUS_SUCCESS)
 		qdf_assert_always(++j < DP_MAX_SRNGS);
 
-	status = dp_get_srng_ring_state_from_hal
-				(pdev->soc, pdev,
-				 &pdev->soc->tcl_status_ring,
-				 TCL_STATUS,
-				 &soc_srngs_state->ring_state[j]);
-
+	status = dp_get_tcl_status_ring_state_from_hal
+				(pdev, &soc_srngs_state->ring_state[j]);
 	if (status == QDF_STATUS_SUCCESS)
 		qdf_assert_always(++j < DP_MAX_SRNGS);
 
@@ -2889,7 +2917,7 @@ static void dp_htt_t2h_msg_handler(void *context, HTC_PACKET *pkt)
 				(u_int8_t *) (msg_word+1),
 				&mac_addr_deswizzle_buf[0]);
 			QDF_TRACE(QDF_MODULE_ID_TXRX,
-				QDF_TRACE_LEVEL_INFO,
+				QDF_TRACE_LEVEL_DEBUG,
 				"HTT_T2H_MSG_TYPE_PEER_MAP msg for peer id %d vdev id %d n",
 				peer_id, vdev_id);
 
@@ -3099,7 +3127,7 @@ static void dp_htt_t2h_msg_handler(void *context, HTC_PACKET *pkt)
 			HTT_RX_PEER_MAP_V2_TID_VALID_HI_PRI_GET(*(msg_word + 5));
 
 			QDF_TRACE(QDF_MODULE_ID_TXRX,
-				  QDF_TRACE_LEVEL_INFO,
+				  QDF_TRACE_LEVEL_DEBUG,
 				  "HTT_T2H_MSG_TYPE_PEER_MAP msg for peer id %d vdev id %d n",
 				  peer_id, vdev_id);
 

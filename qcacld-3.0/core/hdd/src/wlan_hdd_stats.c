@@ -1645,6 +1645,7 @@ void hdd_lost_link_info_cb(hdd_handle_t hdd_handle,
 	struct hdd_context *hdd_ctx = hdd_handle_to_context(hdd_handle);
 	int status;
 	struct hdd_adapter *adapter;
+	struct hdd_station_ctx *sta_ctx;
 
 	status = wlan_hdd_validate_context(hdd_ctx);
 	if (status)
@@ -1663,6 +1664,14 @@ void hdd_lost_link_info_cb(hdd_handle_t hdd_handle,
 
 	adapter->rssi_on_disconnect = lost_link_info->rssi;
 	hdd_debug("rssi on disconnect %d", adapter->rssi_on_disconnect);
+
+	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+	if (!sta_ctx) {
+		hdd_err("invalid sta context");
+		return;
+	}
+
+	sta_ctx->cache_conn_info.signal = lost_link_info->rssi;
 }
 
 const struct nla_policy qca_wlan_vendor_ll_set_policy[
@@ -4674,11 +4683,11 @@ static void hdd_fill_sinfo_rate_info(struct station_info *sinfo,
 		}
 	}
 
-	hdd_info("flag %x mcs %d legacy %d nss %d",
-		 rate_info->flags,
-		 rate_info->mcs,
-		 rate_info->legacy,
-		 rate_info->nss);
+	hdd_debug("flag %x mcs %d legacy %d nss %d",
+		  rate_info->flags,
+		  rate_info->mcs,
+		  rate_info->legacy,
+		  rate_info->nss);
 
 	if (is_tx)
 		sinfo->filled |= HDD_INFO_TX_BITRATE;
@@ -4773,7 +4782,7 @@ static void hdd_fill_rate_info(struct wlan_objmgr_psoc *psoc,
 				       &link_speed_rssi_low,
 				       &link_speed_rssi_report);
 
-	hdd_info("reportMaxLinkSpeed %d", link_speed_rssi_report);
+	hdd_debug("reportMaxLinkSpeed %d", link_speed_rssi_report);
 
 	/* convert to 100kbps expected in rate table */
 	tx_rate = stats->tx_rate.rate / 100;
@@ -4989,20 +4998,20 @@ static void wlan_hdd_fill_station_info(struct wlan_objmgr_psoc *psoc,
 	sinfo->assoc_req_ies_len = stainfo->assoc_req_ies.len;
 
 	/* dump sta info*/
-	hdd_info("dump stainfo");
-	hdd_info("con_time %d inact_time %d tx_pkts %d rx_pkts %d",
-		 sinfo->connected_time, sinfo->inactive_time,
-		 sinfo->tx_packets, sinfo->rx_packets);
-	hdd_info("failed %d retries %d tx_bytes %lld rx_bytes %lld",
-		 sinfo->tx_failed, sinfo->tx_retries,
-		 sinfo->tx_bytes, sinfo->rx_bytes);
-	hdd_info("rssi %d tx mcs %d legacy %d nss %d flags %x",
-		 sinfo->signal, sinfo->txrate.mcs,
-		 sinfo->txrate.legacy, sinfo->txrate.nss,
-		 sinfo->txrate.flags);
-	hdd_info("rx mcs %d legacy %d nss %d flags %x",
-		 sinfo->rxrate.mcs, sinfo->rxrate.legacy,
-		 sinfo->rxrate.nss, sinfo->rxrate.flags);
+	hdd_debug("dump stainfo");
+	hdd_debug("con_time %d inact_time %d tx_pkts %d rx_pkts %d",
+		  sinfo->connected_time, sinfo->inactive_time,
+		  sinfo->tx_packets, sinfo->rx_packets);
+	hdd_debug("failed %d retries %d tx_bytes %lld rx_bytes %lld",
+		  sinfo->tx_failed, sinfo->tx_retries,
+		  sinfo->tx_bytes, sinfo->rx_bytes);
+	hdd_debug("rssi %d tx mcs %d legacy %d nss %d flags %x",
+		  sinfo->signal, sinfo->txrate.mcs,
+		  sinfo->txrate.legacy, sinfo->txrate.nss,
+		  sinfo->txrate.flags);
+	hdd_debug("rx mcs %d legacy %d nss %d flags %x",
+		  sinfo->rxrate.mcs, sinfo->rxrate.legacy,
+		  sinfo->rxrate.nss, sinfo->rxrate.flags);
 }
 
 /**
@@ -5112,7 +5121,7 @@ static uint8_t hdd_get_rate_flags(uint32_t rate,
 	else if (mode == SIR_SME_PHY_MODE_VHT)
 		flags = hdd_get_rate_flags_vht(rate, nss, mcs);
 	else
-		hdd_err("invalid mode param %d", mode);
+		hdd_debug("invalid mode param %d", mode);
 
 	return flags;
 }
@@ -5242,7 +5251,7 @@ static int wlan_hdd_get_station_remote(struct wiphy *wiphy,
 
 	for (i = 0; i < WMI_MAX_CHAINS; i++)
 		stainfo->peer_rssi_per_chain[i] =
-			    stats->peer_stats_info_ext->peer_rssi_per_chain[i] +
+			    stats->peer_stats_info_ext->peer_rssi_per_chain[i] -
 			    WLAN_HDD_TGT_NOISE_FLOOR_DBM;
 
 	qdf_mem_zero(&txrx_stats, sizeof(txrx_stats));
@@ -5254,7 +5263,7 @@ static int wlan_hdd_get_station_remote(struct wiphy *wiphy,
 	txrx_stats.tx_failed = stats->peer_stats_info_ext->tx_failed;
 	txrx_stats.tx_succeed = stats->peer_stats_info_ext->tx_succeed;
 	txrx_stats.rssi = stats->peer_stats_info_ext->rssi
-			+ WLAN_HDD_TGT_NOISE_FLOOR_DBM;
+			- WLAN_HDD_TGT_NOISE_FLOOR_DBM;
 	wlan_hdd_fill_rate_info(&txrx_stats, stats->peer_stats_info_ext);
 	wlan_hdd_fill_station_info(hddctx->psoc, adapter,
 				   sinfo, stainfo, &txrx_stats);
@@ -5345,6 +5354,7 @@ static void wlan_hdd_fill_os_rate_info(enum tx_rate_info rate_flags,
 				       uint8_t dcm,
 				       enum txrate_gi guard_interval)
 {
+	os_rate->nss = nss;
 	if (rate_flags & TX_RATE_LEGACY) {
 		os_rate->legacy = legacy_rate;
 		hdd_debug("Reporting legacy rate %d", os_rate->legacy);
@@ -5354,7 +5364,6 @@ static void wlan_hdd_fill_os_rate_info(enum tx_rate_info rate_flags,
 	/* assume basic BW. anything else will override this later */
 	hdd_set_rate_bw(os_rate, HDD_RATE_BW_20);
 	os_rate->mcs = mcs_index;
-	os_rate->nss = nss;
 
 	wlan_hdd_fill_os_he_rateflags(os_rate, rate_flags, dcm, guard_interval);
 
@@ -5695,7 +5704,8 @@ void hdd_wlan_fill_per_chain_rssi_stats(struct station_info *sinfo,
 }
 #endif
 
-#if defined(CFG80211_RX_FCS_ERROR_REPORTING_SUPPORT)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)) || \
+	defined(CFG80211_RX_FCS_ERROR_REPORTING_SUPPORT)
 static void hdd_fill_fcs_and_mpdu_count(struct hdd_adapter *adapter,
 					struct station_info *sinfo)
 {
@@ -6181,7 +6191,6 @@ struct net_device_stats *hdd_get_stats(struct net_device *dev)
 {
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
 
-	hdd_enter_dev(dev);
 	return &adapter->stats;
 }
 
@@ -7224,6 +7233,7 @@ static void hdd_lost_link_cp_stats_info_cb(void *stats_ev)
 	struct hdd_adapter *adapter;
 	struct stats_event *ev = stats_ev;
 	uint8_t i;
+	struct hdd_station_ctx *sta_ctx;
 
 	if (wlan_hdd_validate_context(hdd_ctx))
 		return;
@@ -7241,6 +7251,11 @@ static void hdd_lost_link_cp_stats_info_cb(void *stats_ev)
 		hdd_debug("rssi %d for " QDF_MAC_ADDR_FMT,
 			  adapter->rssi_on_disconnect,
 			  QDF_MAC_ADDR_REF(adapter->mac_addr.bytes));
+
+		sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+		if (sta_ctx)
+			sta_ctx->cache_conn_info.signal =
+					ev->vdev_summary_stats[i].stats.rssi;
 	}
 }
 

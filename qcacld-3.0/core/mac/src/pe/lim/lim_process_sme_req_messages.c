@@ -1080,8 +1080,8 @@ __lim_handle_sme_start_bss_request(struct mac_context *mac_ctx, uint32_t *msg_bu
 
 		/* Initialize 11h Enable Flag */
 		session->lim11hEnable = 0;
-		if ((CHAN_HOP_ALL_BANDS_ENABLE ||
-		     REG_BAND_5G == session->limRFBand)) {
+		if (CHAN_HOP_ALL_BANDS_ENABLE ||
+		    (session->limRFBand != REG_BAND_2G)) {
 			session->lim11hEnable =
 				mac_ctx->mlme_cfg->gen.enabled_11h;
 
@@ -3168,7 +3168,7 @@ lim_fill_pe_session(struct mac_context *mac_ctx, struct pe_session *session,
 	session->limRFBand = lim_get_rf_band(session->curr_op_freq);
 
 	/* Initialize 11h Enable Flag */
-	if (session->limRFBand == REG_BAND_5G)
+	if (session->limRFBand != REG_BAND_2G)
 		session->lim11hEnable =
 			mac_ctx->mlme_cfg->gen.enabled_11h;
 	else
@@ -5156,6 +5156,8 @@ void lim_calculate_tpc(struct mac_context *mac,
 	struct vdev_mlme_obj *mlme_obj;
 	uint8_t tpe_power;
 	bool skip_tpe = false;
+	bool rf_test_mode = false;
+	bool safe_mode_enable = false;
 
 	mlme_obj = wlan_vdev_mlme_get_cmpt_obj(session->vdev);
 	if (!mlme_obj) {
@@ -5185,13 +5187,25 @@ void lim_calculate_tpc(struct mac_context *mac,
 		/* Power mode calculation for 6G*/
 		ap_power_type_6g = session->ap_power_type;
 		if (LIM_IS_STA_ROLE(session)) {
-			if (!session->lim_join_req) {
-				if (!ctry_code_match)
-					ap_power_type_6g = ap_pwr_type;
+			wlan_mlme_get_safe_mode_enable(mac->psoc,
+						       &safe_mode_enable);
+			wlan_mlme_is_rf_test_mode_enabled(mac->psoc,
+							  &rf_test_mode);
+			/*
+			 * set LPI power if safe mode is enabled OR RF test
+			 * mode is enabled.
+			 */
+			if (rf_test_mode || safe_mode_enable) {
+				ap_power_type_6g = REG_INDOOR_AP;
 			} else {
-				if (!session->same_ctry_code)
-					ap_power_type_6g =
+				if (!session->lim_join_req) {
+					if (!ctry_code_match)
+						ap_power_type_6g = ap_pwr_type;
+				} else {
+					if (!session->same_ctry_code)
+						ap_power_type_6g =
 						session->ap_power_type_6g;
+				}
 			}
 		}
 	}
@@ -5206,7 +5220,9 @@ void lim_calculate_tpc(struct mac_context *mac,
 
 	ch_params.ch_width = CH_WIDTH_20MHZ;
 
-	for (i = 0; i < num_pwr_levels; i++) {
+	for (i = 0;
+		i < num_pwr_levels && (ch_params.ch_width != CH_WIDTH_INVALID);
+		i++) {
 		if (is_tpe_present) {
 			if (is_6ghz_freq) {
 				wlan_reg_get_client_power_for_connecting_ap(
@@ -5224,8 +5240,9 @@ void lim_calculate_tpc(struct mac_context *mac,
 					mac->pdev, oper_freq, 0, &ch_params);
 				mlme_obj->reg_tpc_obj.frequency[i] =
 					ch_params.mhz_freq_seg0;
-				ch_params.ch_width =
-					get_next_higher_bw[ch_params.ch_width];
+				if (ch_params.ch_width != CH_WIDTH_INVALID)
+					ch_params.ch_width =
+						get_next_higher_bw[ch_params.ch_width];
 			}
 			if (is_6ghz_freq) {
 				if (LIM_IS_STA_ROLE(session)) {
@@ -5547,10 +5564,11 @@ void __lim_process_sme_disassoc_cnf(struct mac_context *mac, uint32_t *msg_buf)
 
 	if (!lim_is_sme_disassoc_cnf_valid(mac, &smeDisassocCnf, pe_session)) {
 		pe_err("received invalid SME_DISASSOC_CNF message");
-		status = lim_prepare_disconnect_done_ind(mac, &msg,
-						pe_session->smeSessionId,
-						eSIR_SME_INVALID_PARAMETERS,
-						&smeDisassocCnf.bssid.bytes[0]);
+		status = lim_prepare_disconnect_done_ind(
+					mac, &msg,
+					pe_session->smeSessionId,
+					eSIR_SME_INVALID_PARAMETERS,
+					&smeDisassocCnf.peer_macaddr.bytes[0]);
 		if (QDF_IS_STATUS_SUCCESS(status))
 			lim_send_sme_disassoc_deauth_ntf(mac,
 							 QDF_STATUS_SUCCESS,
@@ -5584,10 +5602,11 @@ void __lim_process_sme_disassoc_cnf(struct mac_context *mac, uint32_t *msg_buf)
 				pe_session->limSmeState);
 			lim_print_sme_state(mac, LOGE,
 					    pe_session->limSmeState);
-			status = lim_prepare_disconnect_done_ind(mac, &msg,
-						pe_session->smeSessionId,
-						eSIR_SME_INVALID_STATE,
-						&smeDisassocCnf.bssid.bytes[0]);
+			status = lim_prepare_disconnect_done_ind(
+					mac, &msg,
+					pe_session->smeSessionId,
+					eSIR_SME_INVALID_STATE,
+					&smeDisassocCnf.peer_macaddr.bytes[0]);
 			if (QDF_IS_STATUS_SUCCESS(status))
 				lim_send_sme_disassoc_deauth_ntf(mac,
 							QDF_STATUS_SUCCESS,
@@ -5602,10 +5621,11 @@ void __lim_process_sme_disassoc_cnf(struct mac_context *mac, uint32_t *msg_buf)
 	default:                /* eLIM_UNKNOWN_ROLE */
 		pe_err("received unexpected SME_DISASSOC_CNF role %d",
 			GET_LIM_SYSTEM_ROLE(pe_session));
-		status = lim_prepare_disconnect_done_ind(mac, &msg,
-						pe_session->smeSessionId,
-						eSIR_SME_INVALID_STATE,
-						&smeDisassocCnf.bssid.bytes[0]);
+		status = lim_prepare_disconnect_done_ind(
+					mac, &msg,
+					pe_session->smeSessionId,
+					eSIR_SME_INVALID_STATE,
+					&smeDisassocCnf.peer_macaddr.bytes[0]);
 		if (QDF_IS_STATUS_SUCCESS(status))
 			lim_send_sme_disassoc_deauth_ntf(mac,
 							 QDF_STATUS_SUCCESS,
@@ -5623,10 +5643,11 @@ void __lim_process_sme_disassoc_cnf(struct mac_context *mac, uint32_t *msg_buf)
 			pe_err("DISASSOC_CNF for a STA with no context, addr= "
 				QDF_MAC_ADDR_FMT,
 				QDF_MAC_ADDR_REF(smeDisassocCnf.peer_macaddr.bytes));
-			status = lim_prepare_disconnect_done_ind(mac, &msg,
-						pe_session->smeSessionId,
-						eSIR_SME_INVALID_PARAMETERS,
-						&smeDisassocCnf.bssid.bytes[0]);
+			status = lim_prepare_disconnect_done_ind(
+					mac, &msg,
+					pe_session->smeSessionId,
+					eSIR_SME_INVALID_PARAMETERS,
+					&smeDisassocCnf.peer_macaddr.bytes[0]);
 			if (QDF_IS_STATUS_SUCCESS(status))
 				lim_send_sme_disassoc_deauth_ntf(mac,
 							QDF_STATUS_SUCCESS,
@@ -5892,6 +5913,51 @@ void lim_send_stop_bss_failure_resp(struct mac_context *mac_ctx,
 			 eSIR_SME_STOP_BSS_FAILURE, session->smeSessionId);
 }
 
+static void lim_flush_all_peer_from_serialization_queue(
+				struct mac_context *mac_ctx,
+				struct pe_session *session)
+{
+	struct wlan_serialization_queued_cmd_info cmd = {0};
+	struct wlan_objmgr_vdev *vdev;
+
+	vdev = session->vdev;
+	if (!vdev) {
+		pe_err("vdev is null");
+		return;
+	}
+
+	pe_debug("vdev id is %d for disconnect/deauth cmd", session->vdev_id);
+
+	/* Flush any pending NB peer deauth command */
+	cmd.vdev = vdev;
+	cmd.cmd_type = WLAN_SER_CMD_FORCE_DEAUTH_STA;
+	cmd.req_type = WLAN_SER_CANCEL_VDEV_NON_SCAN_CMD_TYPE;
+	cmd.requestor = WLAN_UMAC_COMP_MLME;
+	cmd.queue_type = WLAN_SERIALIZATION_PENDING_QUEUE;
+
+	wlan_serialization_cancel_request(&cmd);
+
+	/* Flush any pending NB peer disassoc command */
+	qdf_mem_zero(&cmd, sizeof(cmd));
+	cmd.vdev = vdev;
+	cmd.cmd_type = WLAN_SER_CMD_FORCE_DISASSOC_STA;
+	cmd.req_type = WLAN_SER_CANCEL_VDEV_NON_SCAN_CMD_TYPE;
+	cmd.requestor = WLAN_UMAC_COMP_MLME;
+	cmd.queue_type = WLAN_SERIALIZATION_PENDING_QUEUE;
+
+	wlan_serialization_cancel_request(&cmd);
+
+	/* Flush any pending SB peer deauth/disconnect command */
+	qdf_mem_zero(&cmd, sizeof(cmd));
+	cmd.vdev = vdev;
+	cmd.cmd_type = WLAN_SER_CMD_WM_STATUS_CHANGE;
+	cmd.req_type = WLAN_SER_CANCEL_VDEV_NON_SCAN_CMD_TYPE;
+	cmd.requestor = WLAN_UMAC_COMP_MLME;
+	cmd.queue_type = WLAN_SERIALIZATION_PENDING_QUEUE;
+
+	wlan_serialization_cancel_request(&cmd);
+}
+
 void lim_delete_all_peers(struct pe_session *session)
 {
 	uint8_t i = 0;
@@ -5933,6 +5999,17 @@ void lim_delete_all_peers(struct pe_session *session)
 			QDF_ASSERT(0);
 		}
 	}
+
+	/**
+	 * Scenario: CSA happens and south bound disconnection got queued
+	 * in serialization parallelly.
+	 * As part of CSA, remove all peer from serialization, so that when
+	 * south bound disconnection becomes active, it should not lead to a
+	 * race where the peer is trying to connect and the driver is trying
+	 * to disconnect the same peer, leading to an active command timeout
+	 */
+	lim_flush_all_peer_from_serialization_queue(mac_ctx, session);
+
 	lim_disconnect_complete(session, false);
 	if (mac_ctx->del_peers_ind_cb)
 		mac_ctx->del_peers_ind_cb(mac_ctx->psoc, session->vdev_id);
@@ -8166,7 +8243,7 @@ static void lim_process_sme_channel_change_request(struct mac_context *mac_ctx,
 
 	/* Initialize 11h Enable Flag */
 	if (CHAN_HOP_ALL_BANDS_ENABLE ||
-	    session_entry->limRFBand == REG_BAND_5G)
+	    session_entry->limRFBand != REG_BAND_2G)
 		session_entry->lim11hEnable =
 			mac_ctx->mlme_cfg->gen.enabled_11h;
 	else

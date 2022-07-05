@@ -343,12 +343,12 @@ static void reg_modify_chan_list_for_indoor_channels(
 			     chan_list[chan_enum].chan_flags)) {
 				chan_list[chan_enum].state =
 					CHANNEL_STATE_DFS;
-				chan_list[chan_enum].chan_flags |=
-					REGULATORY_CHAN_NO_IR;
+				if (!pdev_priv_obj->sta_sap_scc_on_indoor_channel)
+					chan_list[chan_enum].chan_flags |=
+							REGULATORY_CHAN_NO_IR;
 			}
 		}
 	}
-
 	if (pdev_priv_obj->force_ssc_disable_indoor_channel &&
 	    pdev_priv_obj->sap_state) {
 		for (chan_enum = 0; chan_enum < NUM_CHANNELS; chan_enum++) {
@@ -2594,22 +2594,6 @@ QDF_STATUS reg_process_master_chan_list_ext(
 	return QDF_STATUS_SUCCESS;
 }
 
-#ifdef CONFIG_REG_CLIENT
-const char *reg_get_power_string(enum reg_6g_ap_type power_type)
-{
-	switch (power_type) {
-	case REG_INDOOR_AP:
-		return "LP";
-	case REG_STANDARD_POWER_AP:
-		return "SP";
-	case REG_VERY_LOW_POWER_AP:
-		return "VLP";
-	default:
-		return "INVALID";
-	}
-}
-#endif
-
 QDF_STATUS reg_get_6g_ap_master_chan_list(struct wlan_objmgr_pdev *pdev,
 					  enum reg_6g_ap_type ap_pwr_type,
 					  struct regulatory_channel *chan_list)
@@ -3231,6 +3215,21 @@ reg_process_afc_event(struct afc_regulatory_info *afc_info)
 	}
 }
 #endif /* CONFIG_AFC_SUPPORT */
+#ifdef CONFIG_REG_CLIENT
+const char *reg_get_power_string(enum reg_6g_ap_type power_type)
+{
+	switch (power_type) {
+	case REG_INDOOR_AP:
+		return "LP";
+	case REG_STANDARD_POWER_AP:
+		return "SP";
+	case REG_VERY_LOW_POWER_AP:
+		return "VLP";
+	default:
+		return "INVALID";
+	}
+}
+#endif
 #endif /* CONFIG_BAND_6GHZ */
 
 QDF_STATUS reg_process_master_chan_list(

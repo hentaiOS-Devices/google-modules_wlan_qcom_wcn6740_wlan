@@ -209,41 +209,6 @@ static inline struct sk_buff *hdd_skb_orphan(struct hdd_adapter *adapter,
 
 	return skb;
 }
-
-#else
-/**
- * hdd_skb_orphan() - skb_unshare a cloned packed else skb_orphan
- * @adapter: pointer to HDD adapter
- * @skb: pointer to skb data packet
- *
- * Return: pointer to skb structure
- */
-static inline struct sk_buff *hdd_skb_orphan(struct hdd_adapter *adapter,
-		struct sk_buff *skb) {
-
-	struct sk_buff *nskb;
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 19, 0))
-	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
-#endif
-	int cpu;
-
-	hdd_skb_fill_gso_size(adapter->dev, skb);
-
-	nskb = skb_unshare(skb, GFP_ATOMIC);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 19, 0))
-	if (unlikely(hdd_ctx->config->tx_orphan_enable) && (nskb == skb)) {
-		/*
-		 * For UDP packets we want to orphan the packet to allow the app
-		 * to send more packets. The flow would ultimately be controlled
-		 * by the limited number of tx descriptors for the vdev.
-		 */
-		cpu = qdf_get_smp_processor_id();
-		++adapter->hdd_stats.tx_rx_stats.per_cpu[cpu].tx_orphaned;
-		skb_orphan(skb);
-	}
-#endif
-	return nskb;
-}
 #endif /* QCA_LL_LEGACY_TX_FLOW_CONTROL */
 
 #define IEEE8021X_AUTH_TYPE_EAP 0
@@ -1623,7 +1588,7 @@ QDF_STATUS hdd_softap_change_sta_state(struct hdd_adapter *adapter,
 					   WLAN_LEGACY_MAC_ID);
 
 	if (!peer) {
-		hdd_err("peer is null");
+		hdd_debug("peer is null");
 		return status;
 	}
 	mldaddr = (struct qdf_mac_addr *)wlan_peer_mlme_get_mldaddr(peer);
