@@ -4412,6 +4412,10 @@ else
 	ccflags-y += -DWLAN_HOST_ARCH_ARM=1
 endif
 
+# Enable the WLAN_FEATURE_MARK_FIRST_WAKEUP_PACKET by Google
+# to support wakeup event metrics
+cppflags-y += -DWLAN_FEATURE_MARK_FIRST_WAKEUP_PACKET
+
 # Android wifi state control interface
 # Define WLAN_CTRL_NAME by Google to create /dev/wlan
 WLAN_CTRL_NAME ?= wlan
