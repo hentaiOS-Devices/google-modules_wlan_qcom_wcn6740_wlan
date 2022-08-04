@@ -1187,7 +1187,8 @@ int wlan_hdd_ipv4_changed(struct notifier_block *nb,
  * CPU can enter CXPC mode.
  * The vote value is in microseconds.
  */
-#define HDD_CPU_CXPC_THRESHOLD (10000)
+//This threshold is changed to 7.5 ms for GSOC.
+#define HDD_CPU_CXPC_THRESHOLD (7500)
 static bool wlan_hdd_is_cpu_cxpc_allowed(unsigned long vote)
 {
 	if (vote >= HDD_CPU_CXPC_THRESHOLD)
