@@ -1524,6 +1524,38 @@ static bool policy_mgr_is_sap_go_existed(struct wlan_objmgr_psoc *psoc)
 	return false;
 }
 
+#ifdef FEATURE_WLAN_CH_AVOID_EXT
+bool policy_mgr_is_safe_channel(struct wlan_objmgr_psoc *psoc,
+				uint32_t ch_freq)
+{
+	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	bool is_safe = true;
+	uint8_t j;
+	unsigned long restriction_mask;
+
+	pm_ctx = policy_mgr_get_context(psoc);
+	if (!pm_ctx) {
+		policy_mgr_err("Invalid context");
+		return is_safe;
+	}
+
+	if (pm_ctx->unsafe_channel_count == 0)
+		return is_safe;
+
+	restriction_mask =
+		(unsigned long)policy_mgr_get_freq_restriction_mask(pm_ctx);
+	for (j = 0; j < pm_ctx->unsafe_channel_count; j++) {
+		if ((ch_freq == pm_ctx->unsafe_channel_list[j]) &&
+		    (qdf_test_bit(QDF_SAP_MODE, &restriction_mask))) {
+			is_safe = false;
+			policy_mgr_warn("Freq %d is not safe, restriction mask %lu", ch_freq, restriction_mask);
+			break;
+		}
+	}
+
+	return is_safe;
+}
+#else
 bool policy_mgr_is_safe_channel(struct wlan_objmgr_psoc *psoc,
 				uint32_t ch_freq)
 {
@@ -1536,7 +1568,6 @@ bool policy_mgr_is_safe_channel(struct wlan_objmgr_psoc *psoc,
 		policy_mgr_err("Invalid context");
 		return is_safe;
 	}
-
 
 	if (pm_ctx->unsafe_channel_count == 0)
 		return is_safe;
@@ -1551,6 +1582,7 @@ bool policy_mgr_is_safe_channel(struct wlan_objmgr_psoc *psoc,
 
 	return is_safe;
 }
+#endif
 
 bool policy_mgr_is_sap_freq_allowed(struct wlan_objmgr_psoc *psoc,
 				    uint32_t sap_freq)
@@ -2386,7 +2418,8 @@ policy_mgr_valid_sap_conc_channel_check(struct wlan_objmgr_psoc *psoc,
 	if (find_alternate) {
 		if (policy_mgr_is_hw_dbs_capable(psoc)) {
 			ch_freq = policy_mgr_get_alternate_channel_for_sap(
-						psoc, sap_vdev_id, sap_ch_freq);
+						psoc, sap_vdev_id, sap_ch_freq,
+						REG_BAND_UNKNOWN);
 			policymgr_nofl_debug("selected alternate ch %d",
 					     ch_freq);
 			if (!ch_freq) {
