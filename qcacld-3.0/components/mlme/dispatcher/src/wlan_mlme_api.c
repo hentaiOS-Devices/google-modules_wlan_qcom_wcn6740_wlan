@@ -31,6 +31,7 @@
 #include "wlan_utility.h"
 #include "wlan_policy_mgr_ucfg.h"
 #include "wlan_vdev_mgr_utils_api.h"
+#include <../../core/src/wlan_cm_vdev_api.h>
 
 /* quota in milliseconds */
 #define MCC_DUTY_CYCLE 70
@@ -5530,3 +5531,70 @@ uint32_t wlan_mlme_get_6g_ap_power_type(struct wlan_objmgr_vdev *vdev)
 	return mlme_obj->reg_tpc_obj.power_type_6g;
 }
 
+QDF_STATUS wlan_connect_hw_mode_change_resp(struct wlan_objmgr_pdev *pdev,
+					    uint8_t vdev_id,
+					    wlan_cm_id cm_id, QDF_STATUS status)
+{
+	return wlan_cm_handle_hw_mode_change_resp(pdev, vdev_id, cm_id,
+						  status);
+}
+
+#ifdef WLAN_FEATURE_11BE
+static inline bool
+wlan_mlme_is_phymode_320_mhz(enum wlan_phymode phy_mode,
+			     enum phy_ch_width *ch_width)
+{
+	if (IS_WLAN_PHYMODE_320MHZ(phy_mode)) {
+		*ch_width = CH_WIDTH_320MHZ;
+		return true;
+	}
+
+	return false;
+}
+#else
+static inline bool
+wlan_mlme_is_phymode_320_mhz(enum wlan_phymode phy_mode,
+			     enum phy_ch_width *ch_width)
+{
+	return false;
+}
+#endif
+
+enum phy_ch_width
+wlan_mlme_get_ch_width_from_phymode(enum wlan_phymode phy_mode)
+{
+	enum phy_ch_width ch_width = CH_WIDTH_20MHZ;
+
+	if (wlan_mlme_is_phymode_320_mhz(phy_mode, &ch_width))
+		goto done;
+
+	if (IS_WLAN_PHYMODE_160MHZ(phy_mode))
+		ch_width = CH_WIDTH_160MHZ;
+	else if (IS_WLAN_PHYMODE_80MHZ(phy_mode))
+		ch_width = CH_WIDTH_80MHZ;
+	else if (IS_WLAN_PHYMODE_40MHZ(phy_mode))
+		ch_width = CH_WIDTH_40MHZ;
+	else
+		ch_width = CH_WIDTH_20MHZ;
+
+done:
+	mlme_legacy_debug("phymode: %d, ch_width: %d ", phy_mode, ch_width);
+
+	return ch_width;
+}
+
+enum phy_ch_width
+wlan_mlme_get_peer_ch_width(struct wlan_objmgr_psoc *psoc, uint8_t *mac)
+{
+	enum wlan_phymode phy_mode;
+	QDF_STATUS status;
+
+	status = mlme_get_peer_phymode(psoc, mac, &phy_mode);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		mlme_legacy_err("failed to fetch phy_mode status: %d for mac: " QDF_MAC_ADDR_FMT,
+				status, QDF_MAC_ADDR_REF(mac));
+		return CH_WIDTH_20MHZ;
+	}
+
+	return wlan_mlme_get_ch_width_from_phymode(phy_mode);
+}

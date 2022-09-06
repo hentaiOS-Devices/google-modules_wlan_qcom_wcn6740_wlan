@@ -3784,11 +3784,18 @@ uint32_t hdd_get_ap_6ghz_capable(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
 		return 0;
 	}
 
-	if (!keymgmt || (keymgmt & (1 << WLAN_CRYPTO_KEY_MGMT_NONE |
-		       1 << WLAN_CRYPTO_KEY_MGMT_SAE |
-		       1 << WLAN_CRYPTO_KEY_MGMT_IEEE8021X_SUITE_B |
-		       1 << WLAN_CRYPTO_KEY_MGMT_IEEE8021X_SUITE_B_192 |
-		       1 << WLAN_CRYPTO_KEY_MGMT_OWE))) {
+	/*
+	 * 6 GHz SAP is allowed in open mode only if the
+	 * check_6ghz_security ini is disabled.
+	 */
+	if (!cfg_get(psoc, CFG_CHECK_6GHZ_SECURITY) &&
+	    (!keymgmt || (keymgmt & (1 << WLAN_CRYPTO_KEY_MGMT_NONE))))
+		capable |= CONN_6GHZ_FLAG_SECURITY_ALLOWED;
+
+	if ((keymgmt & (1 << WLAN_CRYPTO_KEY_MGMT_SAE |
+			1 << WLAN_CRYPTO_KEY_MGMT_IEEE8021X_SUITE_B |
+			1 << WLAN_CRYPTO_KEY_MGMT_IEEE8021X_SUITE_B_192 |
+			1 << WLAN_CRYPTO_KEY_MGMT_OWE))) {
 		capable |= CONN_6GHZ_FLAG_SECURITY_ALLOWED;
 	}
 	capable |= CONN_6GHZ_FLAG_VALID;
@@ -5633,6 +5640,7 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 	enum reg_phymode reg_phy_mode, updated_phy_mode;
 	struct sap_context *sap_ctx;
 	struct wlan_objmgr_vdev *vdev;
+	uint32_t user_config_freq = 0;
 
 	hdd_enter();
 
@@ -5701,6 +5709,8 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 		goto free;
 	}
 
+	user_config_freq = config->chan_freq;
+
 	if (QDF_STATUS_SUCCESS !=
 	    ucfg_policy_mgr_get_indoor_chnl_marking(hdd_ctx->psoc,
 						    &indoor_chnl_marking))
@@ -5757,8 +5767,6 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 		config->acs_dfs_mode = wlan_hdd_get_dfs_mode(mode);
 	}
 
-	policy_mgr_update_user_config_sap_chan(hdd_ctx->psoc,
-					       config->chan_freq);
 	ucfg_policy_mgr_get_mcc_scc_switch(hdd_ctx->psoc, &mcc_to_scc_switch);
 
 	if (adapter->device_mode == QDF_SAP_MODE ||
@@ -6301,6 +6309,7 @@ int wlan_hdd_cfg80211_start_bss(struct hdd_adapter *adapter,
 
 		hdd_green_ap_start_state_mc(hdd_ctx, adapter->device_mode,
 					    true);
+		wlan_set_sap_user_config_freq(vdev, user_config_freq);
 	}
 
 	wlan_hdd_dhcp_offload_enable(hdd_ctx, adapter);
@@ -6496,6 +6505,7 @@ static int __wlan_hdd_cfg80211_stop_ap(struct wiphy *wiphy,
 		hdd_green_ap_start_state_mc(hdd_ctx, adapter->device_mode,
 					    false);
 		wlan_twt_concurrency_update(hdd_ctx);
+		wlan_set_sap_user_config_freq(adapter->vdev, 0);
 		status = ucfg_if_mgr_deliver_event(adapter->vdev,
 				WLAN_IF_MGR_EV_AP_STOP_BSS_COMPLETE,
 				NULL);

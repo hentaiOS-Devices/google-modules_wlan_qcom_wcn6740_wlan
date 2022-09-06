@@ -39,6 +39,7 @@
 #endif
 #include "wlan_cm_ucfg_api.h"
 #include "wlan_cm_roam_api.h"
+#include "wlan_scan_api.h"
 
 /**
  * first_connection_pcl_table - table which provides PCL for the
@@ -2705,13 +2706,15 @@ update_pcl:
 QDF_STATUS
 policy_mgr_get_sap_mandatory_channel(struct wlan_objmgr_psoc *psoc,
 				     uint32_t sap_ch_freq,
-				     uint32_t *intf_ch_freq)
+				     uint32_t *intf_ch_freq,
+				     uint8_t vdev_id)
 {
 	struct policy_mgr_psoc_priv_obj *pm_ctx;
 	QDF_STATUS status;
 	struct policy_mgr_pcl_list pcl;
 	uint32_t i;
 	uint32_t sap_new_freq;
+	qdf_freq_t user_config_freq = 0;
 	bool sta_sap_scc_on_indoor_channel =
 		 policy_mgr_get_sta_sap_scc_allowed_on_indoor_chnl(psoc);
 
@@ -2797,6 +2800,8 @@ policy_mgr_get_sap_mandatory_channel(struct wlan_objmgr_psoc *psoc,
 	}
 
 	sap_new_freq = pcl.pcl_list[0];
+	user_config_freq = policy_mgr_get_user_config_sap_freq(psoc, vdev_id);
+
 	for (i = 0; i < pcl.pcl_len; i++) {
 		/* When sta_sap_scc_on_indoor_channel is enabled,
 		 * and if pcl contains SCC channel, then STA must
@@ -2811,7 +2816,7 @@ policy_mgr_get_sap_mandatory_channel(struct wlan_objmgr_psoc *psoc,
 			goto update_freq;
 		}
 
-		if (pcl.pcl_list[i] ==  pm_ctx->user_config_sap_ch_freq) {
+		if (user_config_freq && (pcl.pcl_list[i] == user_config_freq)) {
 			sap_new_freq = pcl.pcl_list[i];
 			policy_mgr_debug("Prefer starting SAP on user configured channel:%d",
 					 sap_ch_freq);
@@ -2970,7 +2975,8 @@ uint32_t policy_mgr_get_alternate_channel_for_sap(
 	uint8_t pcl_weight[NUM_CHANNELS];
 	uint32_t ch_freq = 0;
 	uint32_t pcl_len = 0;
-	uint32_t first_valid_5g_freq = 0;
+	uint32_t first_valid_dfs_5g_freq = 0;
+	uint32_t first_valid_non_dfs_5g_freq = 0;
 	uint32_t first_valid_6g_freq = 0;
 	struct policy_mgr_conc_connection_info info;
 	uint8_t num_cxn_del = 0;
@@ -3021,11 +3027,17 @@ uint32_t policy_mgr_get_alternate_channel_for_sap(
 			} else if (!ch_freq) {
 				ch_freq = pcl_channels[i];
 			}
-			if (!first_valid_5g_freq &&
+			if (!first_valid_non_dfs_5g_freq &&
 			    wlan_reg_is_5ghz_ch_freq(pcl_channels[i])) {
-				first_valid_5g_freq = pcl_channels[i];
-				if (pref_band == REG_BAND_5G)
-					break;
+				if (!wlan_reg_is_dfs_in_secondary_list_for_freq(
+					pm_ctx->pdev,
+					pcl_channels[i])) {
+					first_valid_non_dfs_5g_freq = pcl_channels[i];
+					if (pref_band == REG_BAND_5G)
+						break;
+					} else if (!first_valid_dfs_5g_freq) {
+						first_valid_dfs_5g_freq = pcl_channels[i];
+					}
 			}
 			if (!first_valid_6g_freq &&
 			    wlan_reg_is_6ghz_chan_freq(pcl_channels[i])) {
@@ -3041,15 +3053,18 @@ uint32_t policy_mgr_get_alternate_channel_for_sap(
 		policy_mgr_restore_deleted_conn_info(psoc, &info, num_cxn_del);
 
 	qdf_mutex_release(&pm_ctx->qdf_conc_list_lock);
-
 	if (pref_band == REG_BAND_6G) {
 		if (first_valid_6g_freq)
 			ch_freq = first_valid_6g_freq;
-		else if (first_valid_5g_freq)
-			ch_freq = first_valid_5g_freq;
+		else if (first_valid_non_dfs_5g_freq)
+			ch_freq = first_valid_non_dfs_5g_freq;
+		else if (first_valid_dfs_5g_freq)
+			ch_freq = first_valid_dfs_5g_freq;
 	} else if (pref_band == REG_BAND_5G) {
-		if (first_valid_5g_freq)
-			ch_freq = first_valid_5g_freq;
+		if (first_valid_non_dfs_5g_freq)
+			ch_freq = first_valid_non_dfs_5g_freq;
+		else if (first_valid_dfs_5g_freq)
+			ch_freq = first_valid_dfs_5g_freq;
 	}
 
 	return ch_freq;
@@ -3200,4 +3215,35 @@ bool policy_mgr_is_3rd_conn_on_same_band_allowed(struct wlan_objmgr_psoc *psoc,
 		break;
 	}
 	return ret;
+}
+
+bool policy_mgr_is_sta_chan_valid_for_connect_and_roam(
+				struct wlan_objmgr_pdev *pdev,
+				qdf_freq_t freq)
+{
+	struct wlan_objmgr_psoc *psoc;
+	uint32_t sap_count;
+	bool skip_6g_and_indoor_freq;
+
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc)
+		return true;
+
+	skip_6g_and_indoor_freq =
+		wlan_scan_cfg_skip_6g_and_indoor_freq(psoc);
+	sap_count =
+		policy_mgr_mode_specific_connection_count(psoc, PM_SAP_MODE,
+							  NULL);
+	/*
+	 * Do not allow STA to connect/roam on 6Ghz or indoor channel for
+	 * non-dbs hardware if SAP is present and skip_6g_and_indoor_freq_scan
+	 * ini is enabled
+	 */
+	if (skip_6g_and_indoor_freq && sap_count &&
+	    !policy_mgr_is_hw_dbs_capable(psoc) &&
+	    (WLAN_REG_IS_6GHZ_CHAN_FREQ(freq) ||
+	     wlan_reg_is_freq_indoor(pdev, freq)))
+		return false;
+
+	return true;
 }

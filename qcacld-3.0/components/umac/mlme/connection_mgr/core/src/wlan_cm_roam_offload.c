@@ -3044,6 +3044,8 @@ cm_roam_stop_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 		goto rel_vdev_ref;
 	}
 
+	wlan_mlme_defer_pmk_set_in_roaming(psoc, vdev_id, false);
+
 	cm_roam_scan_filter(psoc, pdev, vdev_id, ROAM_SCAN_OFFLOAD_STOP,
 			    reason, &stop_req->scan_filter_params);
 	cm_roam_scan_offload_fill_rso_configs(psoc, vdev, rso_cfg,
@@ -3552,8 +3554,11 @@ cm_roam_switch_to_deinit(struct wlan_objmgr_pdev *pdev,
 		if (sup_disabled_roam) {
 			mlme_err("vdev[%d]: supplicant disabled roam. clear roam scan mode",
 				 vdev_id);
-			cm_roam_switch_to_rso_stop(pdev, vdev_id, reason,
-						   NULL, false);
+			status = cm_roam_stop_req(psoc, vdev_id,
+						  REASON_DISCONNECTED,
+						  NULL, false);
+			if (QDF_IS_STATUS_ERROR(status))
+				mlme_err("ROAM: Unable to clear roam scan mode");
 		}
 
 	case WLAN_ROAM_INIT:
@@ -3866,6 +3871,19 @@ cm_roam_switch_to_rso_enable(struct wlan_objmgr_pdev *pdev,
 		return status;
 	}
 	mlme_set_roam_state(psoc, vdev_id, WLAN_ROAM_RSO_ENABLED);
+
+	/* If the set_key for the connected bssid was received during Roam sync
+	 * in progress, then the RSO update to the FW will be rejected. The RSO
+	 * start which might be in progress during set_key could send stale pmk
+	 * to the FW. Therefore, once RSO is enabled, send the RSO update with
+	 * the PMK received from the __wlan_hdd_cfg80211_keymgmt_set_key.
+	 */
+	if (wlan_mlme_is_pmk_set_deferred(psoc, vdev_id)) {
+		cm_roam_send_rso_cmd(psoc, vdev_id,
+				     ROAM_SCAN_OFFLOAD_UPDATE_CFG,
+				     REASON_ROAM_PSK_PMK_CHANGED);
+		wlan_mlme_defer_pmk_set_in_roaming(psoc, vdev_id, false);
+	}
 
 	/*
 	 * If supplicant disabled roaming, driver does not send
@@ -4562,7 +4580,8 @@ out:
 	return status;
 }
 
-void cm_update_pmk_cache_ft(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
+void cm_update_pmk_cache_ft(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+			    struct wlan_crypto_pmksa *pmk_cache)
 {
 	QDF_STATUS status = QDF_STATUS_E_INVAL;
 	struct wlan_objmgr_vdev *vdev;
@@ -4595,8 +4614,12 @@ void cm_update_pmk_cache_ft(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
 	 */
 	wlan_vdev_get_bss_peer_mac(vdev, &pmksa.bssid);
 	wlan_vdev_mlme_get_ssid(vdev, pmksa.ssid, &pmksa.ssid_len);
-	wlan_cm_roam_cfg_get_value(psoc, vdev_id,
-				   MOBILITY_DOMAIN, &src_cfg);
+	wlan_cm_roam_cfg_get_value(psoc, vdev_id, MOBILITY_DOMAIN, &src_cfg);
+
+	if (pmk_cache)
+		qdf_mem_copy(pmksa.cache_id, pmk_cache->cache_id,
+			     WLAN_CACHE_ID_LEN);
+
 	if (src_cfg.bool_value) {
 		pmksa.mdid.mdie_present = 1;
 		pmksa.mdid.mobility_domain = src_cfg.uint_value;
@@ -5251,10 +5274,13 @@ void cm_roam_trigger_info_event(struct wmi_roam_trigger_info *data,
 	qdf_mem_free(log_record);
 }
 
+#define ETP_MAX_VALUE 10000000
+
 void cm_roam_candidate_info_event(struct wmi_roam_candidate_info *ap,
 				  uint8_t cand_ap_idx)
 {
 	struct wlan_log_record *log_record = NULL;
+	uint32_t etp;
 
 	log_record = qdf_mem_malloc(sizeof(*log_record));
 	if (!log_record)
@@ -5274,7 +5300,13 @@ void cm_roam_candidate_info_event(struct wmi_roam_candidate_info *ap,
 	log_record->ap.rssi  = (-1) * ap->rssi;
 	log_record->ap.cu_load = ap->cu_load;
 	log_record->ap.total_score = ap->total_score;
-	log_record->ap.etp = ap->etp;
+	etp = ap->etp * 1000;
+
+	if (etp > ETP_MAX_VALUE)
+		log_record->ap.etp = ETP_MAX_VALUE;
+	else
+		log_record->ap.etp = etp;
+
 	log_record->ap.idx = cand_ap_idx;
 	log_record->ap.freq = ap->freq;
 
@@ -5344,17 +5376,16 @@ void cm_roam_result_info_event(struct wlan_objmgr_psoc *psoc,
 		if (i >= MAX_ROAM_CANDIDATE_AP)
 			break;
 
-		if (res->status == 0 &&
-		    scan_data->ap[i].type == WLAN_ROAM_SCAN_ROAMED_AP) {
-			log_record->bssid = scan_data->ap[i].bssid;
-			break;
-		} else if (scan_data->ap[i].type ==
+		if (scan_data->ap[i].type ==
 			   WLAN_ROAM_SCAN_CURRENT_AP) {
 			log_record->bssid = scan_data->ap[i].bssid;
 			bssid = scan_data->ap[i].bssid;
 			break;
 		}
 	}
+
+	if (!qdf_is_macaddr_zero(&res->fail_bssid))
+		log_record->bssid = res->fail_bssid;
 
 	wlan_connectivity_log_enqueue(log_record);
 	qdf_mem_zero(log_record, sizeof(*log_record));
