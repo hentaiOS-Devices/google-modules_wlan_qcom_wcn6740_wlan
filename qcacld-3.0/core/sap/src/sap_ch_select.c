@@ -50,6 +50,7 @@
 #include "pld_common.h"
 #include "wlan_reg_services_api.h"
 #include <wlan_scan_utils_api.h>
+#include <wlan_policy_mgr_api.h>
 
 /*--------------------------------------------------------------------------
    Function definitions
@@ -416,6 +417,7 @@ static bool sap_chan_sel_init(mac_handle_t mac_handle,
 	bool include_dfs_ch = true;
 	uint8_t sta_sap_scc_on_dfs_chnl_config_value;
 	bool ch_support_puncture;
+	uint32_t sta_gc_present = 0;
 
 	pSpectInfoParams->numSpectChans =
 		mac->scan.base_channels.numChannels;
@@ -496,6 +498,23 @@ static bool sap_chan_sel_init(mac_handle_t mac_handle,
 		/* Skip DSRC channels */
 		if (wlan_reg_is_dsrc_freq(pSpectCh->chan_freq))
 			continue;
+
+		/* Skip indoor channels for sap only*/
+		sta_gc_present =
+			policy_mgr_mode_specific_connection_count(mac->psoc,
+								  PM_STA_MODE,
+								  NULL) +
+			policy_mgr_mode_specific_connection_count(mac->psoc,
+								  PM_P2P_CLIENT_MODE,
+								  NULL);
+
+		if(!sta_gc_present &&
+			!policy_mgr_sap_allowed_on_indoor_freq(mac->psoc,
+							       mac->pdev,
+							       pSpectCh->chan_freq)) {
+			sap_debug("Do not allow SAP on indoor frequency");
+			continue;
+		}
 
 		/*
 		 * Skip the channels which are not in ACS config from user
