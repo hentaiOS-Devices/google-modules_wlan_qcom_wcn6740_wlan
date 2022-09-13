@@ -2012,9 +2012,17 @@ static void cds_trigger_recovery_handler(const char *func, const uint32_t line)
 	 * if *wlan* recovery is disabled, once all the required registers are
 	 * read via the platform driver check and crash the system.
 	 */
+#if defined(CONFIG_WCN_GOOGLE)
+	if(gp_cds_context->recovery_reason == QDF_VDEV_DELETE_RESPONSE_TIMED_OUT)
+		cds_err("Wait SSR for debugging the VDEV DEL TIMEOU ISSUE");
+	else{
+#endif
 	if (qdf->bus_type == QDF_BUS_TYPE_PCI && !ssr_ini_enabled)
 		QDF_DEBUG_PANIC("WLAN recovery is not enabled (via %s:%d)",
 				func, line);
+#if defined(CONFIG_WCN_GOOGLE)
+	}
+#endif
 
 	status = qdf_runtime_pm_allow_suspend(&rtl);
 	if (QDF_IS_STATUS_ERROR(status))
