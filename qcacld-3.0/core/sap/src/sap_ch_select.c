@@ -50,6 +50,7 @@
 #include "pld_common.h"
 #include "wlan_reg_services_api.h"
 #include <wlan_scan_utils_api.h>
+#include <wlan_cp_stats_mc_ucfg_api.h>
 #include <wlan_policy_mgr_api.h>
 
 /*--------------------------------------------------------------------------
@@ -417,7 +418,8 @@ static bool sap_chan_sel_init(mac_handle_t mac_handle,
 	bool include_dfs_ch = true;
 	uint8_t sta_sap_scc_on_dfs_chnl_config_value;
 	bool ch_support_puncture;
-	uint32_t sta_gc_present = 0;
+	bool is_sta_sap_scc;
+	bool sta_sap_scc_on_indoor_channel;
 
 	pSpectInfoParams->numSpectChans =
 		mac->scan.base_channels.numChannels;
@@ -442,6 +444,9 @@ static bool sap_chan_sel_init(mac_handle_t mac_handle,
 	if (!mac->mlme_cfg->dfs_cfg.dfs_master_capable ||
 	    ACS_DFS_MODE_DISABLE == sap_ctx->dfs_mode)
 		include_dfs_ch = false;
+
+	sta_sap_scc_on_indoor_channel =
+		policy_mgr_get_sta_sap_scc_allowed_on_indoor_chnl(mac->psoc);
 
 	/* Fill the channel number in the spectrum in the operating freq band */
 	for (channelnum = 0;
@@ -499,20 +504,15 @@ static bool sap_chan_sel_init(mac_handle_t mac_handle,
 		if (wlan_reg_is_dsrc_freq(pSpectCh->chan_freq))
 			continue;
 
-		/* Skip indoor channels for sap only*/
-		sta_gc_present =
-			policy_mgr_mode_specific_connection_count(mac->psoc,
-								  PM_STA_MODE,
-								  NULL) +
-			policy_mgr_mode_specific_connection_count(mac->psoc,
-								  PM_P2P_CLIENT_MODE,
-								  NULL);
-
-		if(!sta_gc_present &&
-			!policy_mgr_sap_allowed_on_indoor_freq(mac->psoc,
-							       mac->pdev,
-							       pSpectCh->chan_freq)) {
-			sap_debug("Do not allow SAP on indoor frequency");
+		/* Skip indoor channels for non-scc indoor scenario*/
+		is_sta_sap_scc = policy_mgr_is_sta_sap_scc(mac->psoc,
+							   *pChans);
+		if (!(is_sta_sap_scc && sta_sap_scc_on_indoor_channel) &&
+		    !policy_mgr_sap_allowed_on_indoor_freq(mac->psoc,
+							   mac->pdev,
+							   *pChans)) {
+			sap_debug("Do not allow SAP on indoor frequency %u",
+				  *pChans);
 			continue;
 		}
 
