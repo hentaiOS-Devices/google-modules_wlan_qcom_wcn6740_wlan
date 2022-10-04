@@ -451,6 +451,15 @@ ce_completed_recv_next_nolock_srng(struct CE_state *CE_state,
 		goto done;
 	}
 
+#if defined(CONFIG_WCN_GOOGLE)
+	if (CE_state->id == 2) {
+		uint32_t pkt_cnt = hal_srng_dst_num_valid(scn->hal_soc,
+						status_ring->srng_ctx, 1);
+		qdf_assert_always(pkt_cnt < (status_ring->nentries - 4));
+		scn->ce2_last_access = qdf_get_log_timestamp_usecs();
+	}
+#endif
+
 	dest_status = hal_srng_dst_peek(scn->hal_soc, status_ring->srng_ctx);
 	if (!dest_status) {
 		status = QDF_STATUS_E_FAILURE;
