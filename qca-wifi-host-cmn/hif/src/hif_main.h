@@ -337,6 +337,9 @@ struct hif_softc {
 	qdf_atomic_t dp_ep_vote_access;
 	qdf_atomic_t ep_vote_access;
 #endif
+#if defined(CONFIG_WCN_GOOGLE)
+	uint64_t ce2_last_access;
+#endif
 	/* CMEM address target reserved for host usage */
 	uint64_t cmem_start;
 	/* CMEM size target reserved */
