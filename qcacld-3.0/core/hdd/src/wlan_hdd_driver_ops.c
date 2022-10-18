@@ -2058,9 +2058,6 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 	struct qdf_notifer_data hang_evt_data;
 	enum qdf_hang_reason reason = QDF_REASON_UNSPECIFIED;
 	uint8_t bus_type;
-#if defined(CONFIG_WCN_GOOGLE)
-	void *hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
-#endif
 
 	bus_type = pld_get_bus_type(dev);
 
@@ -2072,9 +2069,6 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 	case PLD_FW_DOWN:
 		hdd_debug("Received firmware down indication");
 		hdd_dump_log_buffer();
-#if defined(CONFIG_WCN_GOOGLE)
-		hif_check_ce2_last_access(hif_ctx);
-#endif
 		cds_set_target_ready(false);
 		cds_set_recovery_in_progress(true);
 
@@ -2122,9 +2116,6 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 
 		hdd_send_hang_data(hang_evt_data.hang_data,
 				   QDF_HANG_EVENT_DATA_SIZE);
-#if defined(CONFIG_WCN_GOOGLE)
-		hif_check_ce2_last_access(hif_ctx);
-#endif
 		break;
 	case PLD_BUS_EVENT:
 		hdd_debug("Bus event received");
