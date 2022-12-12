@@ -1001,7 +1001,8 @@ void hal_delayed_reg_write(struct hal_soc *hal_soc,
 			   uint32_t value)
 {
 	if (hal_is_reg_write_tput_level_high(hal_soc) ||
-	    pld_is_device_awake(hal_soc->qdf_dev->dev)) {
+	    pld_is_device_awake(hal_soc->qdf_dev->dev) ||
+	    (srng->flags & HAL_SRNG_DIRECT_REG_WRITE)) {
 		qdf_atomic_inc(&hal_soc->stats.wstats.direct);
 		srng->wstats.direct++;
 		hal_write_address_32_mb(hal_soc, addr, value, false);

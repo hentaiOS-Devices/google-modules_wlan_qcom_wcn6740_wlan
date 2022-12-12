@@ -2162,6 +2162,11 @@ QDF_STATUS dp_srng_init(struct dp_soc *soc, struct dp_srng *srng,
 	if (srng->cached)
 		ring_params.flags |= HAL_SRNG_CACHED_DESC;
 
+	if (ring_type == REO_EXCEPTION || ring_type == REO_STATUS ||
+		(ring_type == WBM2SW_RELEASE &&
+		ring_num == wlan_cfg_get_rx_rel_ring_id(soc->wlan_cfg_ctx)))
+		ring_params.flags |= HAL_SRNG_DIRECT_REG_WRITE;
+
 	srng->hal_srng = hal_srng_setup(hal_soc, ring_type, ring_num,
 					mac_id, &ring_params);
 
