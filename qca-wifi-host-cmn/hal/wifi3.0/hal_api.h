@@ -862,6 +862,7 @@ extern void hal_detach(void *hal_soc);
 #define HAL_SRNG_LOW_THRES_INTR_ENABLE	0x00010000
 #define HAL_SRNG_MSI_INTR				0x00020000
 #define HAL_SRNG_CACHED_DESC		0x00040000
+#define HAL_SRNG_DIRECT_REG_WRITE 0x00100000
 
 #if defined(QCA_WIFI_QCA6490)  || defined(QCA_WIFI_KIWI)
 #define HAL_SRNG_PREFETCH_TIMER 1
