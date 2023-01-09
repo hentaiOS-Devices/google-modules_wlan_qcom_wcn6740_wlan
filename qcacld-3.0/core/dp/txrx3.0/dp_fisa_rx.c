@@ -23,6 +23,7 @@
 #include <enet.h>
 #include <linux/skbuff.h>
 #include "hif.h"
+#include "ani_global.h"
 
 static void dp_rx_fisa_flush_flow_wrap(struct dp_fisa_rx_sw_ft *sw_ft);
 
@@ -1718,7 +1719,8 @@ static int dp_add_nbuf_to_fisa_flow(struct dp_rx_fst *fisa_hdl,
 		dp_err("REO id mismatch flow: %pK napi_id: %u nbuf: %pK reo_id: %u",
 		       fisa_flow, fisa_flow->napi_id, nbuf, napi_id);
 		DP_STATS_INC(fisa_hdl, reo_mismatch, 1);
-		QDF_BUG(0);
+		cds_flush_logs(WLAN_LOG_TYPE_FATAL, WLAN_LOG_INDICATOR_HOST_DRIVER,
+				WLAN_LOG_REASON_REO_ID_MISMATCH, true, true);
 		dp_rx_fisa_release_ft_lock(fisa_hdl, napi_id);
 		return FISA_AGGR_NOT_ELIGIBLE;
 	}

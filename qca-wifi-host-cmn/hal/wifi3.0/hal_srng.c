@@ -1006,6 +1006,8 @@ void hal_delayed_reg_write(struct hal_soc *hal_soc,
 		qdf_atomic_inc(&hal_soc->stats.wstats.direct);
 		srng->wstats.direct++;
 		hal_write_address_32_mb(hal_soc, addr, value, false);
+		hal_verbose_debug("direct reg write: srng 0x%x, addr 0x%pK val %u"
+			, srng->ring_id, addr, value);
 	} else {
 		hal_reg_write_enqueue(hal_soc, srng, addr, value);
 	}
