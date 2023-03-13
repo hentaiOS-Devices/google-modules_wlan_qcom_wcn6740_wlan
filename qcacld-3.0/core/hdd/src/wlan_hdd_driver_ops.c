@@ -2102,8 +2102,8 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 
 		break;
 	case PLD_FW_HANG_EVENT:
-		hdd_info("Received firmware hang event");
 		cds_get_recovery_reason(&reason);
+		hdd_info("Received firmware hang event, reason: %d", reason);
 		qdf_mem_zero(&g_fw_host_hang_event, QDF_HANG_EVENT_DATA_SIZE);
 		hang_evt_data.hang_data = g_fw_host_hang_event;
 		hang_evt_data.offset = 0;
