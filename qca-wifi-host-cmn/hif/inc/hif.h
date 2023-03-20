@@ -2105,10 +2105,6 @@ static inline int hif_system_pm_state_check(struct hif_opaque_softc *hif)
 }
 #endif
 
-#if defined(CONFIG_WCN_GOOGLE)
-void hif_check_ce2_last_access(struct hif_opaque_softc *hif_ctx);
-#endif
-
 #ifdef FEATURE_IRQ_AFFINITY
 /**
  * hif_set_grp_intr_affinity() - API to set affinity for grp

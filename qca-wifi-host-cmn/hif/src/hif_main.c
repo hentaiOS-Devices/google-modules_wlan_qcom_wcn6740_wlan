@@ -2164,16 +2164,6 @@ void hif_set_ce_service_max_rx_ind_flush(struct hif_opaque_softc *hif,
 						ce_service_max_rx_ind_flush;
 }
 
-#if defined(CONFIG_WCN_GOOGLE)
-void hif_check_ce2_last_access(struct hif_opaque_softc *hif_ctx)
-{
-	struct hif_softc *scn = HIF_GET_SOFTC(hif_ctx);
-
-	qdf_assert_always((qdf_get_log_timestamp_usecs() -
-			  scn->ce2_last_access) < 10000000);
-}
-#endif
-
 #ifdef SYSTEM_PM_CHECK
 void __hif_system_pm_set_state(struct hif_opaque_softc *hif,
 			       enum hif_system_pm_state state)
