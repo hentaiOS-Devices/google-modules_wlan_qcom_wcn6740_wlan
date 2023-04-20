@@ -52,6 +52,9 @@
 #include <qdf_hang_event_notifier.h>
 #endif
 #include <linux/cpumask.h>
+#include "host_diag_core_event.h"
+
+static qdf_wake_lock_t wlan_hif_sap_wake_lock;
 
 #if defined(HIF_IPCI) && defined(FEATURE_HAL_DELAYED_REG_WRITE)
 #include <pld_common.h>
@@ -134,9 +137,25 @@ void hif_vote_link_down(struct hif_opaque_softc *hif_ctx)
 
 	scn->linkstate_vote--;
 	hif_info("Down_linkstate_vote %d", scn->linkstate_vote);
-	if (scn->linkstate_vote == 0)
+	if (scn->linkstate_vote == 0) {
 		hif_bus_prevent_linkdown(scn, false);
+		qdf_wake_lock_release(&wlan_hif_sap_wake_lock,
+				      WIFI_POWER_EVENT_WAKELOCK_HIF_SAP);
+		hif_info("Allow system suspend");
+	}
 }
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0))
+static void hif_abort_system_suspend(void)
+{
+	hif_info("Abort system suspend");
+	qdf_pm_system_wakeup();
+}
+#else
+static void hif_abort_system_suspend(void)
+{
+}
+#endif
 
 /**
  * hif_vote_link_up(): vote to prevent bus from suspending
@@ -156,8 +175,13 @@ void hif_vote_link_up(struct hif_opaque_softc *hif_ctx)
 	QDF_BUG(scn);
 	scn->linkstate_vote++;
 	hif_info("Up_linkstate_vote %d", scn->linkstate_vote);
-	if (scn->linkstate_vote == 1)
+	if (scn->linkstate_vote == 1) {
 		hif_bus_prevent_linkdown(scn, true);
+		hif_info("Prevent system suspend");
+		qdf_wake_lock_acquire(&wlan_hif_sap_wake_lock,
+				      WIFI_POWER_EVENT_WAKELOCK_HIF_SAP);
+		hif_abort_system_suspend();
+	}
 }
 
 /**
@@ -954,6 +978,10 @@ struct hif_opaque_softc *hif_open(qdf_device_t qdf_ctx,
 	hif_cpuhp_register(scn);
 	hif_latency_detect_timer_init(scn);
 
+	status = qdf_wake_lock_create(&wlan_hif_sap_wake_lock, "wlan_hif_sap");
+	if (status != 0)
+		hif_err("Cannot create hif wakelock");
+
 out:
 	return GET_HIF_OPAQUE_HDL(scn);
 }
@@ -985,6 +1013,8 @@ void hif_uninit_rri_on_ddr(struct hif_softc *scn)
 void hif_close(struct hif_opaque_softc *hif_ctx)
 {
 	struct hif_softc *scn = HIF_GET_SOFTC(hif_ctx);
+
+	qdf_wake_lock_destroy(&wlan_hif_sap_wake_lock);
 
 	if (!scn) {
 		hif_err("hif_opaque_softc is NULL");
