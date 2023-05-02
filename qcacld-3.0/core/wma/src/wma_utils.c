@@ -1234,12 +1234,6 @@ wma_fill_tx_stats(struct sir_wifi_ll_ext_stats *ll_stats,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	num_entries = fix_param->num_peer_ac_tx_stats * WLAN_MAX_AC;
-	if (num_entries > param_buf->num_tx_stats) {
-		wma_err("tx stats invalid arg, %d", num_entries);
-		return QDF_STATUS_E_FAILURE;
-	}
-
 	for (i = 0; i < fix_param->num_peer_ac_tx_stats; i++) {
 		uint32_t peer_id = wmi_peer_tx[i].peer_id;
 		struct sir_wifi_tx *ac;
