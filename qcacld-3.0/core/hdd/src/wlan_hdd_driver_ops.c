@@ -2058,6 +2058,7 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 	struct qdf_notifer_data hang_evt_data;
 	enum qdf_hang_reason reason = QDF_REASON_UNSPECIFIED;
 	uint8_t bus_type;
+	void *hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 
 	bus_type = pld_get_bus_type(dev);
 
@@ -2098,6 +2099,12 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 	case PLD_FW_HANG_EVENT:
 		cds_get_recovery_reason(&reason);
 		hdd_info("Received firmware hang event, reason: %d", reason);
+
+		if ((reason == QDF_REASON_UNSPECIFIED) && hif_ctx) {
+			hif_display_ctrl_traffic_pipes_state(hif_ctx);
+			hif_display_latest_desc_hist(hif_ctx);
+		}
+
 		qdf_mem_zero(&g_fw_host_hang_event, QDF_HANG_EVENT_DATA_SIZE);
 		hang_evt_data.hang_data = g_fw_host_hang_event;
 		hang_evt_data.offset = 0;
